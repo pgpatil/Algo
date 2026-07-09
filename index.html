@@ -153,6 +153,10 @@ pre{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
   border-radius:6px;padding:10px;overflow:auto;margin-top:6px}
 .wrow{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .wrow input.nm{width:110px}.wrow input.n{width:58px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+canvas.chart{width:100%;height:120px;margin-bottom:10px;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px}
+canvas.chart.big{height:280px;cursor:zoom-out}
 .hide{display:none!important}
 </style>
 </head>
@@ -182,6 +186,15 @@ pre{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
     <div id="signals"><div class="empty">No pending signals. Setups appear
       here with Execute / Skip and a validity countdown. Engine scans the
       whole watchlist while this tab is open, 9:20–14:45 IST.</div></div>
+  </section>
+
+  <section>
+    <h2>Charts — 5-minute</h2>
+    <div class="chips" id="chartChips"></div>
+    <div id="charts"></div>
+    <p class="note">Tap a chart or chip to focus it; tap again to return to
+      the strip view. Amber line EMA 9, grey EMA 21. Up to 3 strips show at
+      once — use ‹ › for the rest of the watchlist.</p>
   </section>
 
   <section class="grid">
@@ -358,6 +371,7 @@ function makeBuilder(minutes){
   let cur=null; const history=[];
   return {
     history,
+    get current(){return cur;},
     onSample(price, ts){
       const b=bucketTs(ts, minutes); let closed=null;
       if(!cur||cur.ts!==b){
@@ -504,15 +518,48 @@ function ySym(name){
 }
 function feedUrl(name){
   const y="https://query1.finance.yahoo.com/v8/finance/chart/"
-          +ySym(name)+"?interval=1m&range=1d";
+          +ySym(name)+"?interval=5m&range=5d";
   if(cfg.relay) return cfg.relay+encodeURIComponent(y);
   return "https://api.allorigins.win/raw?url="+encodeURIComponent(y);
+}
+/* First successful poll rebuilds candles from the feed's 5-minute history
+   (about five sessions) so ORB has today's opening range, EMA has deep
+   warm-up, and charts have context the moment the page opens. Any breakout
+   that already happened today is consumed silently — no stale signals.
+   Assumes the system clock is IST (NSE session times). */
+function backfill(inst,res){
+  const ts=res.timestamp, q=res.indicators&&res.indicators.quote
+    &&res.indicators.quote[0];
+  if(!ts||!q)return;
+  for(let i=0;i<ts.length;i++){
+    const c=q.close&&q.close[i]; if(c==null)continue;
+    const ms=ts[i]*1000;
+    const o=(q.open&&q.open[i])??c, h=(q.high&&q.high[i])??c,
+          l=(q.low&&q.low[i])??c;
+    inst.builder.onSample(o,ms);inst.builder.onSample(h,ms);
+    inst.builder.onSample(l,ms);inst.builder.onSample(c,ms);
+  }
+  if(inst.builder.history.length){
+    orbSignal(inst.builder.history,new Date().toDateString(),inst.orb);
+    toast("Backfilled "+inst.w.name+": "+inst.builder.history.length
+      +" candles incl. prior sessions.");
+  }
+}
+function lastClose(res){
+  const q=res&&res.indicators&&res.indicators.quote&&res.indicators.quote[0];
+  if(!q||!q.close)return null;
+  for(let i=q.close.length-1;i>=0;i--)
+    if(q.close[i]!=null)return q.close[i];
+  return null;
 }
 async function pollOne(inst){
   try{
     const r=await fetch(feedUrl(inst.w.name),{cache:"no-store"});
     const j=await r.json();
-    const p=j?.chart?.result?.[0]?.meta?.regularMarketPrice ?? j?.price;
+    const res=j&&j.chart&&j.chart.result&&j.chart.result[0];
+    if(res&&inst.builder.history.length===0)backfill(inst,res);
+    let p=(res&&res.meta&&res.meta.regularMarketPrice) ?? j?.price;
+    if(typeof p!=="number"||p<=0)p=lastClose(res); // meta sometimes absent
     if(typeof p==="number"&&p>0){
       inst.spot=p; inst.qts=Date.now();
       onSample(inst,p);
@@ -965,8 +1012,86 @@ function renderDashboard(){
       <td class="r ${t.r<0?"neg":"pos"}">${fmtR(t.r)}</td>
       <td class="r">${fmtRs(t.rupees)}</td></tr>`;}).join("")+"</table>";
 }
+/* ============================ CHARTS ==================================== */
+let chartFocus=null, chartPage=0;
+function candlesFor(inst,n){
+  const h=inst.builder.history.slice(-n);
+  const cur=inst.builder.current;
+  return cur?h.concat([cur]):h;
+}
+function drawChart(cv,inst,big){
+  const dpr=devicePixelRatio||1;
+  const ctx=cv.getContext("2d");
+  const W=cv.width=cv.clientWidth*dpr||600;
+  const H=cv.height=(big?280:120)*dpr;
+  ctx.clearRect(0,0,W,H);
+  const cs=candlesFor(inst,big?150:60);
+  ctx.font=(10*dpr)+"px ui-monospace,Menlo,monospace";
+  if(cs.length<2){
+    ctx.fillStyle="#8a93a6";
+    ctx.fillText(inst.w.name+" — waiting for data",10*dpr,16*dpr);
+    return;
+  }
+  const hi=Math.max(...cs.map(c=>c.high)), lo=Math.min(...cs.map(c=>c.low));
+  const span=(hi-lo)||1, padT=18*dpr, padB=6*dpr, padX=6*dpr;
+  const Y=v=>padT+(H-padT-padB)*(1-(v-lo)/span);
+  const step=(W-2*padX)/cs.length, bw=Math.max(dpr,step*0.6);
+  cs.forEach((c,i)=>{
+    const x=padX+step*i+step/2, up=c.close>=c.open;
+    ctx.strokeStyle=ctx.fillStyle=up?"#2ecc8f":"#ff5c5c";
+    ctx.lineWidth=dpr;
+    ctx.beginPath();ctx.moveTo(x,Y(c.high));ctx.lineTo(x,Y(c.low));ctx.stroke();
+    const y1=Y(Math.max(c.open,c.close)), y2=Y(Math.min(c.open,c.close));
+    ctx.fillRect(x-bw/2,y1,bw,Math.max(dpr,y2-y1));
+  });
+  const closes=cs.map(c=>c.close);
+  [[9,"#f5b942"],[21,"#8a93a6"]].forEach(([n,col])=>{
+    if(closes.length<n)return;
+    const e=ema(closes,n);
+    ctx.strokeStyle=col;ctx.lineWidth=dpr;
+    ctx.beginPath();
+    e.forEach((v,i)=>{const x=padX+step*i+step/2;
+      i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});
+    ctx.stroke();
+  });
+  ctx.fillStyle="#e6eaf2";
+  ctx.fillText(inst.w.name+"  "+cs[cs.length-1].close.toFixed(1),
+    8*dpr,13*dpr);
+  ctx.fillStyle="#8a93a6";
+  ctx.fillText("5m · EMA9/21",W-92*dpr,13*dpr);
+}
+function renderCharts(){
+  const chips=$("chartChips"), box=$("charts");
+  if(!chips||!box)return;
+  const names=INST.map(i=>i.w.name);
+  const maxPage=Math.max(0,Math.ceil(names.length/3)-1);
+  if(chartPage>maxPage)chartPage=maxPage;
+  let h="";
+  if(!chartFocus&&names.length>3)
+    h+=`<button class="ghost mini" onclick="chartNav(-1)">‹</button>`;
+  h+=names.map(n=>`<button class="mini ${chartFocus===n?"primary":"ghost"}"
+      onclick="chartSel('${esc(n)}')">${esc(n)}</button>`).join("");
+  if(!chartFocus&&names.length>3)
+    h+=`<button class="ghost mini" onclick="chartNav(1)">›</button>`;
+  if(chartFocus)
+    h+=`<button class="ghost mini" onclick="chartSel('')">✕ all charts</button>`;
+  chips.innerHTML=h;
+  const show=chartFocus?[chartFocus]:names.slice(chartPage*3,chartPage*3+3);
+  box.innerHTML=show.map(n=>
+    `<canvas class="chart${chartFocus?" big":""}" data-c="${esc(n)}"></canvas>`)
+    .join("");
+  box.querySelectorAll("canvas").forEach(cv=>{
+    const inst=instOf(cv.dataset.c);
+    if(inst)drawChart(cv,inst,!!chartFocus);
+    cv.onclick=()=>chartSel(chartFocus===cv.dataset.c?"":cv.dataset.c);
+  });
+}
+window.chartSel=n=>{chartFocus=n||null;renderCharts();};
+window.chartNav=d=>{chartPage=Math.max(0,chartPage+d);renderCharts();};
+
 function render(){
   renderHeader();
+  renderCharts();
   const sig=Object.values(pending);
   $("signals").innerHTML=!sig.length?
     '<div class="empty">No pending signals. Setups appear here with '+
