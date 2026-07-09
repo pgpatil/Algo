@@ -55,7 +55,14 @@ BANKNIFTY 35 shipped) and expiry weekday against current circulars.
 *{box-sizing:border-box;margin:0}
 body{background:var(--ink);color:var(--text);font:14px/1.45 var(--sans);
   padding-bottom:60px}
-.wrap{max-width:1060px;margin:0 auto;padding:0 16px}
+.wrap{max-width:1400px;margin:0 auto;padding:0 16px}
+.shell{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
+.main{min-width:0}
+.rail{position:sticky;top:64px;display:flex;flex-direction:column;gap:16px}
+@media(max-width:980px){
+  .shell{grid-template-columns:1fr}
+  .rail{position:static}
+}
 header{position:sticky;top:0;z-index:5;background:rgba(11,14,20,.93);
   backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
 .strip{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0}
@@ -160,9 +167,20 @@ pre{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 .wrow{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .wrow input.nm{width:110px}.wrow input.n{width:58px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-canvas.chart{width:100%;height:120px;margin-bottom:10px;cursor:pointer;
-  background:var(--panel);border:1px solid var(--line);border-radius:8px}
+.chartbox{position:relative;margin-bottom:10px}
+canvas.chart{width:100%;height:120px;display:block;cursor:pointer;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px 8px 0 0}
 canvas.chart.big{height:280px;cursor:zoom-out}
+canvas.chart.solo{border-radius:8px}
+canvas.ind{width:100%;height:56px;display:block;
+  background:var(--panel);border:1px solid var(--line);border-top:none}
+canvas.ind:last-of-type{border-radius:0 0 8px 8px}
+.chart-tip{position:absolute;pointer-events:none;background:var(--panel2);
+  border:1px solid var(--line);border-radius:6px;padding:6px 9px;
+  font:11px var(--mono);color:var(--text);white-space:nowrap;z-index:3;
+  box-shadow:0 4px 14px rgba(0,0,0,.45);transform:translate(-50%,-108%)}
+.chart-tip .pos{color:var(--up)}.chart-tip .neg{color:var(--down)}
+.indtoggle{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px}
 canvas.spark{width:100%;height:46px;background:none;border:none;
   border-radius:0;margin:4px 0 0;cursor:default}
 .posrow{border-top:1px solid var(--line);padding:10px 0}
@@ -171,6 +189,30 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
   overflow:hidden}
 .pbar i{display:block;height:100%;background:var(--up)}
 .pbar.neg i{background:var(--down)}
+.slt{display:flex;gap:18px;flex-wrap:wrap;margin:8px 0 6px;font:16px var(--mono)}
+.slt span b{display:block;font:400 10px var(--sans);color:var(--mute);
+  letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
+.slt .sl{color:var(--down);font-weight:700}
+.slt .tgt{color:var(--up);font-weight:700}
+.pbadge{font:700 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;
+  padding:3px 7px;border-radius:4px;background:rgba(245,185,66,.15);
+  color:var(--act);white-space:nowrap}
+.stale-note{font:11px var(--mono);color:var(--down);margin-top:4px}
+.toggle{position:relative;display:inline-block;width:38px;height:22px;flex:none}
+.toggle input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.toggle .slider{position:absolute;inset:0;background:var(--line);
+  border-radius:22px;transition:.15s;pointer-events:none}
+.toggle .slider:before{content:"";position:absolute;width:16px;height:16px;
+  left:3px;top:3px;background:var(--text);border-radius:50%;transition:.15s}
+.toggle input:checked+.slider{background:var(--act)}
+.toggle input:checked+.slider:before{transform:translateX(16px);background:var(--act-ink)}
+.toggle input:focus-visible+.slider{outline:2px solid var(--act);outline-offset:2px}
+.stratrow{display:flex;align-items:flex-start;gap:12px;padding:10px 0;
+  border-top:1px solid var(--line)}
+.stratrow:first-child{border-top:none;padding-top:2px}
+.stratinfo{flex:1;min-width:0}
+.stratname{font:600 14px var(--sans)}
+.stratmeta{font:11px var(--mono);color:var(--mute);margin-top:3px}
 .check{display:flex;flex-direction:column;gap:6px;font-size:13px}
 .check .ok{color:var(--up)}.check .todo{color:var(--mute)}
 @media(max-width:620px){
@@ -207,43 +249,38 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
   </nav>
 </div></header>
 
+<div class="wrap shell">
+<div class="main">
+
 <!-- ============================ DESK VIEW ============================== -->
-<div class="wrap" id="view_desk">
+<div id="view_desk">
   <div id="feedBanner" class="banner" hidden></div>
   <div class="panel" id="setupCard" style="margin-top:16px" hidden></div>
+
   <section>
-    <h2>Signals — waiting on you</h2>
-    <div id="signals"><div class="empty">No pending signals. Setups appear
-      here with Execute / Skip and a validity countdown. Engine scans the
-      whole watchlist while this tab is open, 9:20–14:45 IST.</div></div>
+    <h2>Strategies</h2>
+    <div class="panel" id="stratPicker"></div>
   </section>
 
   <section>
     <h2>Charts — 5-minute</h2>
     <div class="chips" id="chartChips"></div>
+    <div class="indtoggle" id="indToggle"></div>
     <div id="charts"></div>
     <p class="note">Tap a chart or chip to focus it; tap again to return to
-      the strip view. Amber line EMA 9, grey EMA 21. Up to 3 strips show at
-      once — use ‹ › for the rest of the watchlist.</p>
+      the strip view. Amber line EMA 9, grey EMA 21. Hover a chart for OHLC
+      and indicator values at that candle. Up to 3 strips show at once —
+      use ‹ › for the rest of the watchlist.</p>
   </section>
 
-  <section class="grid">
-    <div class="panel">
-      <h2>Open positions</h2>
-      <div id="positions"><div class="empty">Nothing open.</div></div>
-    </div>
-    <div class="panel">
-      <h2>Closed today</h2>
-      <div id="closed"><div class="empty">No closed trades yet today.</div></div>
-    </div>
-  </section>
   <p class="note">Quotes are best-effort from a public feed — verify price
-    inside the Kite popup before any live order. Full analytics live in the
-    Dashboard tab.</p>
+    inside the Kite popup before any live order. Signals, open positions and
+    today's trades are always visible in the panel on the right. Full
+    analytics live in the Dashboard tab.</p>
 </div>
 
 <!-- ============================ DASHBOARD VIEW ========================= -->
-<div class="wrap hide" id="view_dash">
+<div class="hide" id="view_dash">
   <section>
     <h2>Performance</h2>
     <div class="filters">
@@ -275,6 +312,28 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
       while it holds.</p>
   </section>
 </div>
+
+</div><!-- /.main -->
+
+<aside class="rail">
+  <div class="panel">
+    <h2>Signals — waiting on you</h2>
+    <div class="scroll" id="signals"><div class="empty">No pending signals.
+      Setups appear here with Execute / Skip and a validity countdown.
+      Engine scans the whole watchlist while this tab is open,
+      9:20–14:45 IST.</div></div>
+  </div>
+  <div class="panel">
+    <h2>Open positions</h2>
+    <div class="scroll" id="positions"><div class="empty">Nothing open.</div></div>
+  </div>
+  <div class="panel">
+    <h2>Closed today</h2>
+    <div class="scroll" id="closed"><div class="empty">No closed trades yet today.</div></div>
+  </div>
+</aside>
+
+</div><!-- /.shell -->
 
 <div id="toasts"></div>
 
@@ -328,11 +387,8 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
   <div class="frow"><label>Signal sound</label>
     <label style="min-width:0"><input type="checkbox" id="s_sound" checked>
       beep on signal / exit</label></div>
-  <div class="frow"><label>Strategies</label>
-    <label style="min-width:0"><input type="checkbox" id="s_orb" checked> ORB</label>
-    <label style="min-width:0"><input type="checkbox" id="s_ema" checked> EMA 9/21</label>
-    <label style="min-width:0"><input type="checkbox" id="s_morning" checked>
-      Morning Trend (09:45-11:00)</label></div>
+  <p class="note">Strategy on/off toggles moved to the Strategies card on the
+    Desk screen — each shows its backtested and live track record.</p>
   <div class="frow"><label>Custom data relay URL</label>
     <input id="s_relay" placeholder="optional — leave blank for public proxy" size="30"></div>
   <details><summary>Own data relay (recommended, free Cloudflare Worker)</summary>
@@ -420,6 +476,27 @@ function makeBuilder(minutes){
 }
 
 function ema(vals,n){const k=2/(n+1);let e=vals[0];return vals.map(v=>e=v*k+e*(1-k));}
+
+/* chart-only indicators — not wired into signal generation, display use */
+function macd(closes, fast=12, slow=26, signal=9){
+  const ef=ema(closes,fast), es=ema(closes,slow);
+  const line=closes.map((_,i)=>ef[i]-es[i]);
+  const sig=ema(line,signal);
+  const hist=line.map((v,i)=>v-sig[i]);
+  return {line,signal:sig,hist};
+}
+function stochastic(candles, kPeriod=14, dPeriod=3){
+  const k=candles.map((_,i)=>{
+    const win=candles.slice(Math.max(0,i-kPeriod+1),i+1);
+    const hh=Math.max(...win.map(c=>c.high)), ll=Math.min(...win.map(c=>c.low));
+    return 100*(candles[i].close-ll)/((hh-ll)||1);
+  });
+  const d=k.map((_,i)=>{
+    const win=k.slice(Math.max(0,i-dPeriod+1),i+1);
+    return win.reduce((a,b)=>a+b,0)/win.length;
+  });
+  return {k,d};
+}
 
 function orbSignal(candles, todayStr, firedRef){
   if(firedRef.day===todayStr) return null;
@@ -673,7 +750,7 @@ async function pollOne(inst){
   }catch(e){/* stale indicator handles it */}
 }
 async function poll(){
-  for(const inst of INST){ await pollOne(inst); }
+  await Promise.all(INST.map(pollOne));
   render();
 }
 
@@ -686,8 +763,8 @@ function fresh(inst){ return Date.now()-inst.qts < cfg.poll*3000; }
 
 function onSample(inst,price){
   const t=new Date();
-  checkExits(inst,price,t);
   const closed=inst.builder.onSample(price,t.getTime());
+  checkExits(inst,price,t);
   if(closed) evaluate(inst,t);
   expireStale();
 }
@@ -773,6 +850,9 @@ function openPosition(s,v,fillPrice){
   positions[s.id]={sig:s,symbol:v.symbol,exchange:v.exchange,qty:v.qty,
     orderSide:v.orderSide,fill:fillPrice,opened:Date.now()};
 }
+/* Checks the running 5-min bar's high/low (built from every polled tick),
+   not just the latest tick — a price that spikes through SL/target and
+   bounces back between polls would otherwise never be seen. */
 function checkExits(inst,price,t){
   const past=t.getHours()>15||(t.getHours()===15&&t.getMinutes()>=12);
   if(past&&!sqOff){sqOff=true;
@@ -782,13 +862,15 @@ function checkExits(inst,price,t){
       closePosition(id,(pi&&pi.spot)||price,"EOD square-off");
     }
     return;}
+  const bar=inst.builder.current;
+  const hi=bar?bar.high:price, lo=bar?bar.low:price;
   for(const id in positions){
     const p=positions[id], s=p.sig;
     if(s.underlying!==inst.w.name)continue;
-    const hitStop=s.side==="BUY"?price<=s.stop:price>=s.stop;
-    const hitTgt =s.side==="BUY"?price>=s.target:price<=s.target;
-    if(hitStop)closePosition(id,price,"Stop hit");
-    else if(hitTgt)closePosition(id,price,"Target hit");
+    const hitStop=s.side==="BUY"?lo<=s.stop:hi>=s.stop;
+    const hitTgt =s.side==="BUY"?hi>=s.target:lo<=s.target;
+    if(hitStop)closePosition(id,s.stop,"Stop hit");
+    else if(hitTgt)closePosition(id,s.target,"Target hit");
   }
 }
 function closePosition(id,undPrice,reason){
@@ -1089,6 +1171,49 @@ function renderHeader(){
   $("haltBtn").textContent=halted?"Resume":"Halt today";
   renderSync();
 }
+
+/* Strategy picker: on/off toggle per algo, its backtested numbers (where we
+   have them on file) alongside its actual live/paper track record from this
+   journal — the two are never merged so a backtest claim can't be mistaken
+   for a live result. */
+const STRAT_META=[
+  {flag:"orb",code:"ORB",name:"ORB",tag:"Opening range breakout, first 15m"},
+  {flag:"ema",code:"EMA_CROSS",name:"EMA 9/21",tag:"Trend cross on 5-min candles"},
+  {flag:"morning",code:"MORNING_TREND",name:"Morning Trend",
+    tag:"Supertrend flip + VWAP, 09:45–11:00 IST",
+    backtest:{years:10.5,win:55,pf:1.37,avgR:0.121,sample:"out-of-sample"}},
+];
+function renderStrategyPicker(){
+  const box=$("stratPicker"); if(!box)return;
+  box.innerHTML=STRAT_META.map(m=>{
+    const live=statPack(trades.filter(x=>x.strategy===m.code));
+    const liveTxt=live
+      ?`live: ${live.n} trade${live.n===1?"":"s"} · `
+        +`${live.win_pct.toFixed(0)}% win · ${fmtR(live.expectancy)}/trade`
+      :"live: no closed trades yet";
+    const btTxt=m.backtest
+      ?`backtest: ${m.backtest.win}% win · PF ${m.backtest.pf} · `
+        +`${fmtR(m.backtest.avgR)}/trade · ${m.backtest.years}y ${m.backtest.sample}`
+      :"no external backtest on file — judge by the live line below";
+    return `<div class="stratrow">
+      <label class="toggle"><input type="checkbox" data-strat="${m.flag}"
+        ${cfg[m.flag]?"checked":""}><span class="slider"></span></label>
+      <div class="stratinfo">
+        <div class="stratname">${esc(m.name)}
+          <span class="tag">${esc(m.tag)}</span></div>
+        <div class="stratmeta">${esc(btTxt)}</div>
+        <div class="stratmeta">${esc(liveTxt)}</div>
+      </div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("[data-strat]").forEach(el=>{
+    el.onchange=()=>{
+      cfg[el.dataset.strat]=el.checked;cfg.cfgUpdated=Date.now();
+      store.set("cfg",cfg);OD.pushSoon();
+      toast((el.checked?"Enabled ":"Disabled ")+el.dataset.strat.toUpperCase());
+    };
+  });
+}
 function drawCurve(rs){
   const cv=$("curve"), ctx=cv.getContext("2d");
   const W=cv.width=cv.clientWidth*devicePixelRatio||600;
@@ -1258,7 +1383,95 @@ function drawChart(cv,inst,big){
     8*dpr,13*dpr);
   ctx.fillStyle="#8a93a6";
   ctx.fillText("5m · EMA9/21",W-92*dpr,13*dpr);
+  cv._meta={cs,padX,step,dpr};
 }
+function drawMACD(cv,cs){
+  const dpr=devicePixelRatio||1, ctx=cv.getContext("2d");
+  const W=cv.width=cv.clientWidth*dpr||600, H=cv.height=56*dpr;
+  ctx.clearRect(0,0,W,H);
+  ctx.font=(10*dpr)+"px ui-monospace,Menlo,monospace";
+  if(cs.length<27){ctx.fillStyle="#8a93a6";
+    ctx.fillText("MACD — needs 27+ candles",8*dpr,16*dpr);return;}
+  const closes=cs.map(c=>c.close);
+  const {line,signal:sig,hist}=macd(closes);
+  const all=line.concat(sig,hist);
+  const mn=Math.min(...all), mx=Math.max(...all), span=(mx-mn)||1;
+  const padX=6*dpr, padT=8*dpr, padB=6*dpr;
+  const Y=v=>padT+(H-padT-padB)*(1-(v-mn)/span);
+  const step=(W-2*padX)/cs.length;
+  const zero=Y(0);
+  hist.forEach((v,i)=>{
+    const x=padX+step*i+step/2, y=Y(v);
+    ctx.fillStyle=v>=0?"rgba(46,204,143,.55)":"rgba(255,92,92,.55)";
+    ctx.fillRect(x-step*0.3,Math.min(y,zero),Math.max(dpr,step*0.6),
+      Math.max(dpr,Math.abs(zero-y)));
+  });
+  const stroke=(arr,col)=>{ctx.strokeStyle=col;ctx.lineWidth=dpr;ctx.beginPath();
+    arr.forEach((v,i)=>{const x=padX+step*i+step/2;
+      i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});ctx.stroke();};
+  stroke(line,"#f5b942"); stroke(sig,"#8a93a6");
+  ctx.fillStyle="#8a93a6";ctx.fillText("MACD 12/26/9",8*dpr,12*dpr);
+}
+function drawStoch(cv,cs){
+  const dpr=devicePixelRatio||1, ctx=cv.getContext("2d");
+  const W=cv.width=cv.clientWidth*dpr||600, H=cv.height=56*dpr;
+  ctx.clearRect(0,0,W,H);
+  ctx.font=(10*dpr)+"px ui-monospace,Menlo,monospace";
+  if(cs.length<14){ctx.fillStyle="#8a93a6";
+    ctx.fillText("Stochastic — needs 14+ candles",8*dpr,16*dpr);return;}
+  const {k,d}=stochastic(cs);
+  const padX=6*dpr, padT=8*dpr, padB=6*dpr;
+  const Y=v=>padT+(H-padT-padB)*(1-v/100);
+  const step=(W-2*padX)/cs.length;
+  ctx.strokeStyle="#1f2736";ctx.lineWidth=dpr;
+  [20,80].forEach(v=>{ctx.beginPath();ctx.moveTo(padX,Y(v));
+    ctx.lineTo(W-padX,Y(v));ctx.stroke();});
+  const stroke=(arr,col)=>{ctx.strokeStyle=col;ctx.lineWidth=dpr;ctx.beginPath();
+    arr.forEach((v,i)=>{const x=padX+step*i+step/2;
+      i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});ctx.stroke();};
+  stroke(k,"#f5b942"); stroke(d,"#8a93a6");
+  ctx.fillStyle="#8a93a6";ctx.fillText("Stoch 14,3",8*dpr,12*dpr);
+}
+/* hover crosshair: shows OHLC + any active indicator values at the candle
+   under the cursor, in a floating tooltip positioned within the chartbox */
+function chartHover(e,cv,tip){
+  const meta=cv._meta; if(!meta){tip.hidden=true;return;}
+  const rect=cv.getBoundingClientRect();
+  const xCss=e.clientX-rect.left;
+  let idx=Math.round(((xCss*meta.dpr)-meta.padX-meta.step/2)/meta.step);
+  idx=Math.max(0,Math.min(meta.cs.length-1,idx));
+  const c=meta.cs[idx];
+  if(!c){tip.hidden=true;return;}
+  let extra="";
+  if(activeInd.macd&&meta.cs.length>=27){
+    const {line,signal:sig,hist}=macd(meta.cs.map(x=>x.close));
+    extra+=`<div>MACD ${line[idx].toFixed(2)} / ${sig[idx].toFixed(2)} `
+      +`(hist ${hist[idx]>=0?"+":""}${hist[idx].toFixed(2)})</div>`;
+  }
+  if(activeInd.stoch&&meta.cs.length>=14){
+    const {k,d}=stochastic(meta.cs);
+    extra+=`<div>Stoch %K ${k[idx].toFixed(0)} %D ${d[idx].toFixed(0)}</div>`;
+  }
+  const up=c.close>=c.open;
+  tip.innerHTML=`<div><b>${new Date(c.ts).toTimeString().slice(0,5)}</b></div>
+    <div>O ${c.open.toFixed(1)} H ${c.high.toFixed(1)} L ${c.low.toFixed(1)} `
+    +`<span class="${up?"pos":"neg"}">C ${c.close.toFixed(1)}</span></div>${extra}`;
+  const boxRect=cv.parentElement.getBoundingClientRect();
+  let left=rect.left-boxRect.left+xCss;
+  left=Math.max(40,Math.min(boxRect.width-40,left));
+  tip.style.left=left+"px";
+  tip.style.top=Math.max(20,e.clientY-boxRect.top)+"px";
+  tip.hidden=false;
+}
+let activeInd={macd:false,stoch:false};
+function renderIndToggle(){
+  const el=$("indToggle"); if(!el)return;
+  if(!chartFocus){el.innerHTML="";return;}
+  el.innerHTML=[["macd","MACD"],["stoch","Stochastic"]].map(([k,label])=>
+    `<button class="mini ${activeInd[k]?"primary":"ghost"}"
+      onclick="toggleInd('${k}')">${label}</button>`).join("");
+}
+window.toggleInd=k=>{activeInd[k]=!activeInd[k];renderCharts();};
 function renderCharts(){
   const chips=$("chartChips"), box=$("charts");
   if(!chips||!box)return;
@@ -1275,14 +1488,34 @@ function renderCharts(){
   if(chartFocus)
     h+=`<button class="ghost mini" onclick="chartSel('')">✕ all charts</button>`;
   chips.innerHTML=h;
+  renderIndToggle();
   const show=chartFocus?[chartFocus]:names.slice(chartPage*3,chartPage*3+3);
-  box.innerHTML=show.map(n=>
-    `<canvas class="chart${chartFocus?" big":""}" data-c="${esc(n)}"></canvas>`)
-    .join("");
-  box.querySelectorAll("canvas").forEach(cv=>{
-    const inst=instOf(cv.dataset.c);
-    if(inst)drawChart(cv,inst,!!chartFocus);
-    cv.onclick=()=>chartSel(chartFocus===cv.dataset.c?"":cv.dataset.c);
+  box.innerHTML=show.map(n=>{
+    const big=!!chartFocus;
+    let ind="";
+    if(big){
+      if(activeInd.macd)ind+=`<canvas class="ind" data-ind="macd"></canvas>`;
+      if(activeInd.stoch)ind+=`<canvas class="ind" data-ind="stoch"></canvas>`;
+    }
+    return `<div class="chartbox" data-c="${esc(n)}">
+      <canvas class="chart${big?" big":" solo"}"></canvas>
+      ${ind}
+      <div class="chart-tip" hidden></div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll(".chartbox").forEach(bx=>{
+    const inst=instOf(bx.dataset.c);
+    if(!inst)return;
+    const cv=bx.querySelector("canvas.chart");
+    drawChart(cv,inst,!!chartFocus);
+    cv.onclick=()=>chartSel(chartFocus===bx.dataset.c?"":bx.dataset.c);
+    const tip=bx.querySelector(".chart-tip");
+    cv.onmousemove=e=>chartHover(e,cv,tip);
+    cv.onmouseleave=()=>{tip.hidden=true;};
+    const cs=candlesFor(inst,150);
+    bx.querySelectorAll("canvas.ind").forEach(icv=>{
+      if(icv.dataset.ind==="macd")drawMACD(icv,cs); else drawStoch(icv,cs);
+    });
   });
 }
 window.chartSel=n=>{chartFocus=n||null;renderCharts();};
@@ -1321,6 +1554,7 @@ function drawSpark(cv,inst,g){
 function render(){
   renderHeader();
   renderSetup();
+  renderStrategyPicker();
   renderCharts();
   const sig=Object.values(pending);
   $("signals").innerHTML=!sig.length?
@@ -1375,14 +1609,16 @@ function render(){
           :(s.stop-spot)/((s.stop-s.target)||1);
         prog=Math.max(0,Math.min(1,prog));
       }
-      let action;
+      let action, badge="";
       if(p._exitSent){
+        badge=`<span class="pbadge">exit sent — confirm in Kite</span>`;
         action=`<div class="row"><span class="tag">exit sent — record fill:</span>
           <input type="number" step="0.05" style="width:90px" data-xf="${id}">
           <button class="mini primary" onclick="saveExitFill('${id}')">Save</button>
           <button class="mini ghost" onclick="saveExitFill('${id}',1)">Skip ₹</button>
           </div>`;
       }else if(p._awaitFill){
+        badge=`<span class="pbadge">awaiting fill</span>`;
         action=`<div class="row"><span class="tag">confirmed in Kite? fill:</span>
           <input type="number" step="0.05" style="width:90px" data-ff="${id}">
           <button class="mini primary" onclick="saveFill('${id}')">Save</button>
@@ -1394,6 +1630,9 @@ function render(){
           <button class="danger mini" onclick="manualClose('${id}')">Close</button>
           </div>`;
       }
+      const staleNote=(!inst||!fresh(inst))
+        ?`<div class="stale-note">⚠ feed stale on ${esc(s.underlying)} — SL/target
+           checks are paused until quotes resume</div>`:"";
       return `<div class="posrow">
         <div class="top"><span class="who">${esc(p.symbol)}</span>
           <span class="tag">${esc(s.underlying)} · ${esc(s.strategy)} ·
@@ -1403,8 +1642,13 @@ function render(){
             ${uR==null?"—":fmtR(uR)}</span></div>
         <div class="pbar${uR!=null&&uR<0?" neg":""}">
           <i style="width:${(prog*100).toFixed(0)}%"></i></div>
-        <div class="tag">SL ${s.stop.toFixed(1)}
-          ${spot?"· now "+spot.toFixed(1)+" ":""}····· T ${s.target.toFixed(1)}</div>
+        <div class="slt">
+          <span><b>stop</b><span class="sl">${s.stop.toFixed(1)}</span></span>
+          <span><b>target</b><span class="tgt">${s.target.toFixed(1)}</span></span>
+          <span><b>ltp</b>${spot?spot.toFixed(1):"—"}</span>
+          ${badge?`<span style="margin-left:auto">${badge}</span>`:""}
+        </div>
+        ${staleNote}
         ${action}</div>`;
     }).join("");
   const today=new Date().toDateString();
@@ -1512,8 +1756,7 @@ function loadSettings(){
   $("s_msid").value=cfg.msid||"";
   $("s_expday").value=cfg.expday;$("s_poll").value=cfg.poll;
   $("s_ttl").value=cfg.ttl;$("s_maxpos").value=cfg.maxpos;
-  $("s_maxloss").value=cfg.maxlossR;$("s_orb").checked=cfg.orb;
-  $("s_ema").checked=cfg.ema;$("s_morning").checked=cfg.morning;
+  $("s_maxloss").value=cfg.maxlossR;
   $("s_relay").value=cfg.relay;
   const box=$("watchrows");box.innerHTML="";
   cfg.watch.forEach(w=>box.appendChild(watchRow(w)));
@@ -1542,8 +1785,6 @@ $("s_save").onclick=()=>{
     expday:+$("s_expday").value,
     poll:Math.max(10,+$("s_poll").value||20),ttl:+$("s_ttl").value||180,
     maxpos:+$("s_maxpos").value||2,maxlossR:+$("s_maxloss").value||3,
-    orb:$("s_orb").checked,ema:$("s_ema").checked,
-    morning:$("s_morning").checked,
     relay:$("s_relay").value.trim(),
     watch:watch.length?watch:DEF_WATCH,
     cfgUpdated:Date.now()});
