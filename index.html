@@ -157,7 +157,29 @@ pre{font:11px var(--mono);background:var(--panel2);border:1px solid var(--line);
 canvas.chart{width:100%;height:120px;margin-bottom:10px;cursor:pointer;
   background:var(--panel);border:1px solid var(--line);border-radius:8px}
 canvas.chart.big{height:280px;cursor:zoom-out}
+canvas.spark{width:100%;height:46px;background:none;border:none;
+  border-radius:0;margin:4px 0 0;cursor:default}
+.posrow{border-top:1px solid var(--line);padding:10px 0}
+.posrow:first-child{border-top:none;padding-top:2px}
+.pbar{height:5px;background:var(--line);border-radius:3px;margin:8px 0 4px;
+  overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--up)}
+.pbar.neg i{background:var(--down)}
+.check{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.check .ok{color:var(--up)}.check .todo{color:var(--mute)}
+@media(max-width:620px){
+  .panel{overflow-x:auto}
+  .panel table{min-width:520px}
+  button{padding:10px 14px}
+  .dayr{font-size:16px}
+  .strip{gap:8px}
+  .nums{gap:14px}
+}
 .hide{display:none!important}
+.banner{margin-top:16px;padding:12px 16px;border-radius:8px;font-size:13px;
+  border:1px solid var(--down);background:rgba(255,92,92,.1);color:#ffd0d0}
+.banner.warn{border-color:var(--act);background:rgba(245,185,66,.1);
+  color:#ffe6a8}
 </style>
 </head>
 <body>
@@ -181,6 +203,8 @@ canvas.chart.big{height:280px;cursor:zoom-out}
 
 <!-- ============================ DESK VIEW ============================== -->
 <div class="wrap" id="view_desk">
+  <div id="feedBanner" class="banner" hidden></div>
+  <div class="panel" id="setupCard" style="margin-top:16px" hidden></div>
   <section>
     <h2>Signals — waiting on you</h2>
     <div id="signals"><div class="empty">No pending signals. Setups appear
@@ -226,6 +250,9 @@ canvas.chart.big{height:280px;cursor:zoom-out}
     </div>
     <div class="stats" id="stats"></div>
     <canvas id="curve" height="170"></canvas>
+
+    <h2>Rolling 20-trade expectancy — is the edge holding?</h2>
+    <canvas id="rolling" height="120" style="height:120px"></canvas>
 
     <h2>What's working — instrument × strategy, by expectancy</h2>
     <div class="panel" id="breakdown"><div class="empty">Builds after your
@@ -287,6 +314,13 @@ canvas.chart.big{height:280px;cursor:zoom-out}
     <input id="s_maxpos" type="number" value="2" style="width:70px">
     <label style="min-width:0">Daily loss halt (R)</label>
     <input id="s_maxloss" type="number" value="3" step="0.5" style="width:70px"></div>
+  <div class="frow"><label>Capital (₹, for risk %)</label>
+    <input id="s_cap" type="number" value="0" style="width:110px">
+    <label style="min-width:0">Cost / round trip (₹)</label>
+    <input id="s_cost" type="number" value="100" style="width:80px"></div>
+  <div class="frow"><label>Signal sound</label>
+    <label style="min-width:0"><input type="checkbox" id="s_sound" checked>
+      beep on signal / exit</label></div>
   <div class="frow"><label>Strategies</label>
     <label style="min-width:0"><input type="checkbox" id="s_orb" checked> ORB</label>
     <label style="min-width:0"><input type="checkbox" id="s_ema" checked> EMA 9/21</label></div>
@@ -308,18 +342,6 @@ canvas.chart.big{height:280px;cursor:zoom-out}
     <button id="s_import" class="ghost">Import journal</button>
     <input type="file" id="s_file" accept=".json" hidden>
     <button id="s_wipe" class="danger">Wipe journal</button></div>
-</dialog>
-
-<dialog id="fillDlg">
-  <h2 style="margin-bottom:10px">Order sent to Kite</h2>
-  <p id="fillText" style="margin-bottom:12px"></p>
-  <div class="frow"><label>Fill price (traded instrument)</label>
-    <input id="fillPrice" type="number" step="0.05" style="width:110px"></div>
-  <div class="frow">
-    <button id="fillYes" class="primary">Mark filled</button>
-    <button id="fillNo" class="ghost">Not taken</button></div>
-  <p class="note">Confirm the actual fill from Kite's order book. The journal
-    never guesses.</p>
 </dialog>
 
 <form method="post" id="kiteForm" action="https://kite.zerodha.com/connect/basket"
@@ -486,6 +508,7 @@ const DEF_WATCH=[
 ];
 const DEFAULTS={mode:"PAPER",pubkey:"",expday:2,poll:20,ttl:180,maxpos:2,
   maxlossR:3,orb:true,ema:true,relay:"",watch:DEF_WATCH,msid:"",
+  capital:0,cost:100,sound:true,setupDone:false,
   cfgUpdated:0};
 let store={set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){this.mem[k]=v;}},
   get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):
@@ -515,12 +538,6 @@ function ySym(name){
   if(name==="NIFTY 50")return "%5ENSEI";
   if(name==="NIFTY BANK")return "%5ENSEBANK";
   return encodeURIComponent(name.trim().toUpperCase()+".NS");
-}
-function feedUrl(name){
-  const y="https://query1.finance.yahoo.com/v8/finance/chart/"
-          +ySym(name)+"?interval=5m&range=5d";
-  if(cfg.relay) return cfg.relay+encodeURIComponent(y);
-  return "https://api.allorigins.win/raw?url="+encodeURIComponent(y);
 }
 /* First successful poll rebuilds candles from the feed's 5-minute history
    (about five sessions) so ORB has today's opening range, EMA has deep
@@ -552,14 +569,47 @@ function lastClose(res){
     if(q.close[i]!=null)return q.close[i];
   return null;
 }
+/* Feed resilience: try several free CORS proxies in turn. Public proxies
+   rate-limit and go down; a chain means one outage no longer freezes the
+   app. Your own Cloudflare relay (Settings) jumps the queue when set.
+   corsproxy.io + codetabs work on github.io; allorigins is the fallback. */
+function yahooURL(name){
+  return "https://query1.finance.yahoo.com/v8/finance/chart/"
+    +ySym(name)+"?interval=5m&range=5d";
+}
+function proxyChain(y){
+  const list=[];
+  if(cfg.relay)list.push(cfg.relay+encodeURIComponent(y));
+  list.push("https://corsproxy.io/?url="+encodeURIComponent(y));
+  list.push("https://api.codetabs.com/v1/proxy/?quest="+encodeURIComponent(y));
+  list.push("https://api.allorigins.win/raw?url="+encodeURIComponent(y));
+  list.push("https://api.cors.lol/?url="+encodeURIComponent(y));
+  return list;
+}
+let feedHealth={ok:0,fail:0,lastOkProxy:null};
+async function fetchFeed(name){
+  const y=yahooURL(name);
+  for(const url of proxyChain(y)){
+    try{
+      const r=await fetch(url,{cache:"no-store"});
+      if(!r.ok)continue;
+      const txt=await r.text();
+      const j=JSON.parse(txt);
+      if(j&&j.chart&&j.chart.result){feedHealth.lastOkProxy=url.split("/")[2];
+        return j;}
+    }catch(e){/* try next proxy */}
+  }
+  return null;
+}
 async function pollOne(inst){
+  const j=await fetchFeed(inst.w.name);
+  if(!j){feedHealth.fail++;return;}
+  feedHealth.ok++;
   try{
-    const r=await fetch(feedUrl(inst.w.name),{cache:"no-store"});
-    const j=await r.json();
-    const res=j&&j.chart&&j.chart.result&&j.chart.result[0];
+    const res=j.chart.result[0];
     if(res&&inst.builder.history.length===0)backfill(inst,res);
-    let p=(res&&res.meta&&res.meta.regularMarketPrice) ?? j?.price;
-    if(typeof p!=="number"||p<=0)p=lastClose(res); // meta sometimes absent
+    let p=(res&&res.meta&&res.meta.regularMarketPrice) ?? null;
+    if(typeof p!=="number"||p<=0)p=lastClose(res);
     if(typeof p==="number"&&p>0){
       inst.spot=p; inst.qts=Date.now();
       onSample(inst,p);
@@ -614,6 +664,7 @@ function evaluate(inst,t){
     s.vehicle=inst.w.vehicle;
     s._w=inst.w;
     pending[s.id]=s;
+    beep();
     notify((s.side==="BUY"?"BUY ":"SELL ")+s.underlying+" ["+s.strategy+"]",
       "entry "+s.entry.toFixed(1)+" · SL "+s.stop.toFixed(1)
       +" · T "+s.target.toFixed(1));
@@ -655,7 +706,9 @@ function execSignal(id){
     sendToKite([{variety:"regular",exchange:v.exchange,tradingsymbol:v.symbol,
       transaction_type:v.orderSide,quantity:v.qty,order_type:"MARKET",
       product:"MIS",readonly:false}]);
-    askFill(s,v);
+    openPosition(s,v,null);
+    positions[s.id]._awaitFill=true;
+    toast("Order sent to Kite — record the fill in Open positions.");
   }
   render();
 }
@@ -686,6 +739,7 @@ function closePosition(id,undPrice,reason){
   if(cfg.mode==="LIVE-ASSIST"&&!p._exitSent){
     p._exitSent=true; p._exitReason=reason; p._exitUnd=undPrice;
     const exitSide=(p.sig.vehicle==="OPTION"||p.orderSide==="BUY")?"SELL":"BUY";
+    beep();
     notify("EXIT "+p.symbol,reason+" — confirm in Kite now");
     sendToKite([{variety:"regular",exchange:p.exchange,tradingsymbol:p.symbol,
       transaction_type:exitSide,quantity:p.qty,order_type:"MARKET",
@@ -709,7 +763,8 @@ function journalClose(p,undPrice,reason,exitFill){
   trades.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,8),
     closed:Date.now(),symbol:p.symbol,side:p.sig.side,
     strategy:p.sig.strategy,underlying:p.sig.underlying,
-    vehicle:p.sig.vehicle,reason,r:+r.toFixed(3),rupees,mode:cfg.mode});
+    vehicle:p.sig.vehicle,reason,r:+r.toFixed(3),rupees,
+    cost:+cfg.cost||0,mode:cfg.mode});
   store.set("trades",trades);
   OD.pushSoon();
   toast((r>=0?"🟢":"🔴")+" Closed "+p.symbol+" — "+reason+" · "
@@ -735,15 +790,6 @@ function sendToKite(basket){
   document.getElementById("kiteKey").value=cfg.pubkey;
   document.getElementById("kiteData").value=JSON.stringify(basket);
   document.getElementById("kiteForm").submit();
-}
-let fillCtx=null;
-function askFill(s,v){
-  fillCtx={s,v};
-  $("fillText").textContent=
-    v.orderSide+" "+v.qty+" × "+v.symbol+" — confirm it in the Kite popup, "
-    +"then record the fill here.";
-  $("fillPrice").value="";
-  $("fillDlg").showModal();
 }
 
 /* ============================ ONEDRIVE SYNC ============================= */
@@ -912,6 +958,41 @@ function notify(title,body){
   if("Notification" in window&&Notification.permission==="granted")
     new Notification(title,{body});
 }
+/* attention: audio ping + tab-title flash + favicon dot until acted on */
+function beep(){
+  if(cfg.sound===false)return;
+  try{
+    const a=new (window.AudioContext||window.webkitAudioContext)();
+    const o=a.createOscillator(), g=a.createGain();
+    o.connect(g);g.connect(a.destination);
+    o.frequency.value=880;
+    g.gain.setValueAtTime(0.12,a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,a.currentTime+0.3);
+    o.start();o.stop(a.currentTime+0.32);
+  }catch(e){/* needs one user interaction first — browsers gate audio */}
+}
+const BASE_TITLE=document.title;
+function favicon(hot){
+  let l=document.querySelector("link[rel=icon]");
+  if(!l){l=document.createElement("link");l.rel="icon";
+    document.head.appendChild(l);}
+  const c=document.createElement("canvas");c.width=c.height=32;
+  const x=c.getContext("2d");
+  x.fillStyle="#0b0e14";x.fillRect(0,0,32,32);
+  x.fillStyle=hot?"#f5b942":"#2ecc8f";
+  x.beginPath();x.arc(16,16,10,0,7);x.fill();
+  l.href=c.toDataURL();
+}
+let _flip=false;
+setInterval(()=>{
+  const need=Object.keys(pending).length>0
+    ||Object.values(positions).some(p=>p._exitSent);
+  if(need){_flip=!_flip;
+    document.title=(_flip?"● ":"")+"ACTION — Nifty Algo";
+    favicon(_flip);}
+  else if(document.title!==BASE_TITLE){
+    document.title=BASE_TITLE;favicon(false);}
+},1000);
 function filteredTrades(){
   const fi=$("f_inst").value, fs=$("f_strat").value, fm=$("f_mode").value;
   return trades.filter(t=>(!fi||t.underlying===fi)
@@ -920,6 +1001,23 @@ function filteredTrades(){
 function renderHeader(){
   const m=$("mode");m.textContent=cfg.mode.toLowerCase();
   m.className="badge "+(cfg.mode==="LIVE-ASSIST"?"live":"paper");
+  // feed banner: loud when no instrument has fresh data
+  const bn=$("feedBanner");
+  if(bn){
+    const anyFresh=INST.some(fresh);
+    const anyData=INST.some(i=>i.qts>0);
+    if(!anyData&&feedHealth.fail>0){
+      bn.hidden=false;bn.className="banner";
+      bn.textContent="No market data — all free data proxies are unreachable "
+        +"right now. The app is running but paused. It keeps retrying; if this "
+        +"persists, set your own relay URL in Settings (one free Cloudflare "
+        +"Worker, most reliable).";
+    }else if(!anyFresh&&anyData){
+      bn.hidden=false;bn.className="banner warn";
+      bn.textContent="Market data stale — feed slowed or the market is closed. "
+        +"Signals are paused until quotes resume.";
+    }else bn.hidden=true;
+  }
   $("tape").innerHTML=INST.map(i=>{
     const age=i.qts?Math.round((Date.now()-i.qts)/1000):null;
     const st=fresh(i)?"":"stale";
@@ -962,9 +1060,48 @@ function drawCurve(rs){
   ctx.fillText(fmtR(pts[pts.length-1])+" over "+rs.length+" trades",
     pad,16*devicePixelRatio);
 }
+function drawRolling(rs){
+  const cv=$("rolling"); if(!cv)return;
+  const dpr=devicePixelRatio||1;
+  const ctx=cv.getContext("2d");
+  const W=cv.width=cv.clientWidth*dpr||600;
+  const H=cv.height=120*dpr;
+  ctx.clearRect(0,0,W,H);
+  ctx.font=(11*dpr)+"px ui-monospace,Menlo,monospace";
+  ctx.fillStyle="#8a93a6";
+  if(rs.length<5){
+    ctx.fillText("Needs 5+ closed trades. Shows the mean R of the last 20 "
+      +"trades at each point — a falling line is a decaying edge.",
+      12*dpr,24*dpr);
+    return;
+  }
+  const roll=rs.map((_,i)=>{
+    const w=rs.slice(Math.max(0,i-19),i+1);
+    return w.reduce((a,b)=>a+b,0)/w.length;
+  });
+  const mn=Math.min(0,...roll), mx=Math.max(0,...roll), span=(mx-mn)||1;
+  const pad=14*dpr;
+  const X=i=>pad+(W-2*pad)*i/(roll.length-1||1);
+  const Y=v=>H-pad-(H-2*pad)*(v-mn)/span;
+  ctx.strokeStyle="#1f2736";ctx.lineWidth=dpr;
+  ctx.beginPath();ctx.moveTo(pad,Y(0));ctx.lineTo(W-pad,Y(0));ctx.stroke();
+  ctx.strokeStyle=roll[roll.length-1]>=0?"#2ecc8f":"#ff5c5c";
+  ctx.lineWidth=2*dpr;
+  ctx.beginPath();
+  roll.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
+  ctx.stroke();
+  ctx.fillStyle="#8a93a6";
+  ctx.fillText("latest: "+fmtR(roll[roll.length-1])+" per trade",
+    pad,16*dpr);
+}
 function renderDashboard(){
   const ft=filteredTrades();
   const st=statPack(ft);
+  const costs=ft.reduce((a,t)=>a+(t.cost||0),0);
+  const rupeesKnown=ft.filter(t=>t.rupees!=null);
+  const netRs=rupeesKnown.length
+    ?rupeesKnown.reduce((a,t)=>a+t.rupees,0)
+      -rupeesKnown.reduce((a,t)=>a+(t.cost||0),0):null;
   $("stats").innerHTML=!st?'<div class="stat"><b>trades</b><span>0</span></div>':
     `<div class="stat"><b>trades</b><span>${st.n}</span></div>
      <div class="stat"><b>net</b><span class="${st.netR<0?"neg":"pos"}">
@@ -975,8 +1112,13 @@ function renderDashboard(){
      <div class="stat"><b>profit factor</b><span>
        ${st.profit_factor===Infinity?"∞":st.profit_factor.toFixed(2)}</span></div>
      <div class="stat"><b>max drawdown</b>
-       <span class="neg">−${st.max_dd.toFixed(2)}R</span></div>`;
+       <span class="neg">−${st.max_dd.toFixed(2)}R</span></div>
+     <div class="stat"><b>est. costs</b>
+       <span class="neg">${fmtRs(-costs)}</span></div>
+     ${netRs!=null?`<div class="stat"><b>net ₹ after costs</b>
+       <span class="${netRs<0?"neg":"pos"}">${fmtRs(netRs)}</span></div>`:""}`;
   drawCurve(ft.map(t=>t.r));
+  drawRolling(ft.map(t=>t.r));
   const rows=breakdownRows(trades);
   $("breakdown").innerHTML=!rows.length?
     '<div class="empty">Builds after your first closed trades. Read '+
@@ -1089,8 +1231,39 @@ function renderCharts(){
 window.chartSel=n=>{chartFocus=n||null;renderCharts();};
 window.chartNav=d=>{chartPage=Math.max(0,chartPage+d);renderCharts();};
 
+/* signal sparkline: last hour of price with entry / stop / target levels */
+function drawSpark(cv,inst,g){
+  const dpr=devicePixelRatio||1;
+  const ctx=cv.getContext("2d");
+  const W=cv.width=cv.clientWidth*dpr||500;
+  const H=cv.height=46*dpr;
+  ctx.clearRect(0,0,W,H);
+  const cs=candlesFor(inst,12);
+  if(cs.length<2)return;
+  const closes=cs.map(c=>c.close);
+  const lo=Math.min(...closes,g.stop,g.target,g.entry);
+  const hi=Math.max(...closes,g.stop,g.target,g.entry);
+  const span=(hi-lo)||1, pad=4*dpr;
+  const Y=v=>pad+(H-2*pad)*(1-(v-lo)/span);
+  const X=i=>pad+(W-2*pad)*i/(closes.length-1);
+  const level=(v,col)=>{ctx.strokeStyle=col;ctx.lineWidth=dpr;
+    ctx.setLineDash([4*dpr,4*dpr]);
+    ctx.beginPath();ctx.moveTo(pad,Y(v));ctx.lineTo(W-pad,Y(v));ctx.stroke();
+    ctx.setLineDash([]);};
+  level(g.stop,"#ff5c5c");level(g.target,"#2ecc8f");level(g.entry,"#3a4356");
+  ctx.strokeStyle="#e6eaf2";ctx.lineWidth=1.5*dpr;
+  ctx.beginPath();
+  closes.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
+  ctx.stroke();
+  ctx.fillStyle="#f5b942";
+  ctx.beginPath();
+  ctx.arc(X(closes.length-1),Y(closes[closes.length-1]),2.5*dpr,0,7);
+  ctx.fill();
+}
+
 function render(){
   renderHeader();
+  renderSetup();
   renderCharts();
   const sig=Object.values(pending);
   $("signals").innerHTML=!sig.length?
@@ -1099,16 +1272,25 @@ function render(){
     'watchlist while this tab is open, 9:20–14:45 IST.</div>':
     sig.map(g=>{
       const v=resolveVehicle(g);
+      const riskRs=Math.round(Math.abs(g.entry-g.stop)*v.qty);
+      const pct=cfg.capital>0?100*riskRs/cfg.capital:null;
+      const capTxt=pct!=null?` · ${pct.toFixed(1)}% of capital`
+        +(pct>1?" ⚠ over 1%":""):"";
       return `<div class="sig" data-id="${g.id}" data-created="${g.created}">
         <div class="top">
           <span class="pill ${g.side==="BUY"?"buy":"sell"}">${g.side}</span>
           <span class="who">${esc(g.underlying)}</span>
-          <span class="tag">${esc(g.strategy)}</span></div>
+          <span class="tag">${esc(g.strategy)}</span>
+          <span class="tag drift" data-du="${esc(g.underlying)}"
+            data-de="${g.entry}"></span></div>
         <div class="nums">
           <span><b>entry ref</b>${g.entry.toFixed(1)}</span>
           <span><b>stop</b>${g.stop.toFixed(1)}</span>
           <span><b>target</b>${g.target.toFixed(1)}</span>
-          <span><b>risk pts</b>${Math.abs(g.entry-g.stop).toFixed(1)}</span></div>
+          <span><b>risk pts</b>${Math.abs(g.entry-g.stop).toFixed(1)}</span>
+          <span><b>≈risk (und.)</b>₹${riskRs.toLocaleString("en-IN")}</span></div>
+        <div class="tag">${capTxt?capTxt.slice(3):""}</div>
+        <canvas class="spark" data-spk="${g.id}"></canvas>
         <div class="row"><span class="tag">order:</span>
           <input class="sym-edit" data-sym="${g.id}" value="${esc(v.symbol)}">
           <span class="tag">× ${v.qty} ${v.orderSide} MKT MIS</span></div>
@@ -1118,22 +1300,56 @@ function render(){
           <button class="ghost" onclick="skipSignal('${g.id}')">Skip</button>
           <div class="ttl"><i></i></div><span class="ttl-label"></span></div>
       </div>`;}).join("");
+  sig.forEach(g=>{
+    const cv=document.querySelector(`[data-spk="${g.id}"]`);
+    const inst=instOf(g.underlying);
+    if(cv&&inst)drawSpark(cv,inst,g);
+  });
   const pos=Object.entries(positions);
   $("positions").innerHTML=!pos.length?
     '<div class="empty">Nothing open.</div>':
-    "<table><tr><th>Symbol</th><th class='r'>Qty</th><th class='r'>SL / T"+
-    "</th><th></th></tr>"+pos.map(([id,p])=>{
-      const act=p._exitSent?
-        `<button class="danger mini" onclick="promptExitFill('${id}')">Record
-         exit fill</button>`:
-        `<button class="danger mini" onclick="manualClose('${id}')">Close</button>`;
-      return `<tr><td>${esc(p.symbol)}<br><span class="tag">
-        ${esc(p.sig.underlying)} · ${esc(p.sig.strategy)}
-        · ${new Date(p.opened).toTimeString().slice(0,5)}
-        ${p._exitSent?" · EXIT SENT TO KITE":""}</span></td>
-        <td class="r">${p.qty}</td>
-        <td class="r">${p.sig.stop.toFixed(1)} / ${p.sig.target.toFixed(1)}</td>
-        <td class="r">${act}</td></tr>`;}).join("")+"</table>";
+    pos.map(([id,p])=>{
+      const s=p.sig, inst=instOf(s.underlying), spot=inst&&inst.spot;
+      const uR=spot?rMultiple(s,spot):null;
+      let prog=0;
+      if(spot){
+        prog=s.side==="BUY"
+          ?(spot-s.stop)/((s.target-s.stop)||1)
+          :(s.stop-spot)/((s.stop-s.target)||1);
+        prog=Math.max(0,Math.min(1,prog));
+      }
+      let action;
+      if(p._exitSent){
+        action=`<div class="row"><span class="tag">exit sent — record fill:</span>
+          <input type="number" step="0.05" style="width:90px" data-xf="${id}">
+          <button class="mini primary" onclick="saveExitFill('${id}')">Save</button>
+          <button class="mini ghost" onclick="saveExitFill('${id}',1)">Skip ₹</button>
+          </div>`;
+      }else if(p._awaitFill){
+        action=`<div class="row"><span class="tag">confirmed in Kite? fill:</span>
+          <input type="number" step="0.05" style="width:90px" data-ff="${id}">
+          <button class="mini primary" onclick="saveFill('${id}')">Save</button>
+          <button class="mini ghost" onclick="notTaken('${id}')">Not taken</button>
+          <button class="danger mini" onclick="manualClose('${id}')">Close</button>
+          </div>`;
+      }else{
+        action=`<div class="row">
+          <button class="danger mini" onclick="manualClose('${id}')">Close</button>
+          </div>`;
+      }
+      return `<div class="posrow">
+        <div class="top"><span class="who">${esc(p.symbol)}</span>
+          <span class="tag">${esc(s.underlying)} · ${esc(s.strategy)} ·
+            qty ${p.qty} · ${new Date(p.opened).toTimeString().slice(0,5)}</span>
+          <span class="${uR!=null&&uR<0?"neg":"pos"}"
+            style="margin-left:auto;font:600 15px var(--mono)">
+            ${uR==null?"—":fmtR(uR)}</span></div>
+        <div class="pbar${uR!=null&&uR<0?" neg":""}">
+          <i style="width:${(prog*100).toFixed(0)}%"></i></div>
+        <div class="tag">SL ${s.stop.toFixed(1)}
+          ${spot?"· now "+spot.toFixed(1)+" ":""}····· T ${s.target.toFixed(1)}</div>
+        ${action}</div>`;
+    }).join("");
   const today=new Date().toDateString();
   const cl=trades.filter(t=>new Date(t.closed).toDateString()===today)
                  .slice().reverse();
@@ -1151,22 +1367,59 @@ function render(){
 window.skipSignal=id=>{delete pending[id];render();};
 window.execSignal=execSignal;
 window.manualClose=manualClose;
-window.promptExitFill=id=>{
+window.saveFill=id=>{
   const p=positions[id]; if(!p)return;
-  fillCtx={exitFor:id};
-  $("fillText").textContent="Exit for "+p.symbol
-    +" was sent to Kite. Record the exit fill from the order book.";
-  $("fillPrice").value="";
-  $("fillDlg").showModal();
+  const el=document.querySelector(`[data-ff="${id}"]`);
+  const v=parseFloat(el&&el.value);
+  if(!isNaN(v))p.fill=v;
+  p._awaitFill=false;
+  toast("LIVE position tracked: "+p.symbol);render();
 };
+window.notTaken=id=>{
+  delete positions[id];toast("Order marked not taken.");render();
+};
+window.saveExitFill=(id,skip)=>{
+  const el=document.querySelector(`[data-xf="${id}"]`);
+  const v=skip?NaN:parseFloat(el&&el.value);
+  confirmLiveExit(id,isNaN(v)?null:v);
+};
+
+/* first-run checklist — disappears once dismissed or everything is green */
+function renderSetup(){
+  const card=$("setupCard"); if(!card)return;
+  if(cfg.setupDone){card.hidden=true;return;}
+  const items=[
+    [INST.some(fresh),"Data feed receiving quotes"],
+    ["Notification" in window&&Notification.permission==="granted",
+      "Browser alerts enabled (button in header)"],
+    [!!cfg.pubkey,"Kite Publisher api_key set (only needed for LIVE-ASSIST)"],
+    [!!OD.tok,"OneDrive connected (only needed for multi-device sync)"],
+  ];
+  card.hidden=false;
+  card.innerHTML="<h2>Setup</h2><div class='check'>"
+    +items.map(([ok,txt])=>`<span class="${ok?"ok":"todo"}">
+      ${ok?"✓":"○"} ${txt}</span>`).join("")
+    +`</div><div class="row"><button class="ghost mini"
+      onclick="dismissSetup()">Dismiss</button></div>`;
+}
+window.dismissSetup=()=>{cfg.setupDone=true;store.set("cfg",cfg);render();};
 
 setInterval(()=>{
   document.querySelectorAll(".sig[data-created]").forEach(el=>{
     const left=cfg.ttl-((Date.now()-(+el.dataset.created))/1000);
     if(left<=0){delete pending[el.dataset.id];render();return;}
     const bar=el.querySelector(".ttl i"),lab=el.querySelector(".ttl-label");
-    if(bar)bar.style.width=(100*left/cfg.ttl)+"%";
+    if(bar){bar.style.width=(100*left/cfg.ttl)+"%";
+      bar.style.background=left<30?"#ff5c5c":"";}
     if(lab)lab.textContent=Math.ceil(left)+"s";
+  });
+  document.querySelectorAll(".drift").forEach(el=>{
+    const i=instOf(el.dataset.du);
+    if(i&&i.spot){
+      const d=i.spot-(+el.dataset.de);
+      el.textContent="now "+i.spot.toFixed(1)
+        +" ("+(d>=0?"+":"")+d.toFixed(1)+")";
+    }
   });
 },500);
 
@@ -1275,18 +1528,6 @@ $("alertBtn").onclick=async()=>{
 };
 if("Notification" in window&&Notification.permission==="granted")
   $("alertBtn").hidden=true;
-
-$("fillYes").onclick=()=>{
-  const price=parseFloat($("fillPrice").value);
-  $("fillDlg").close();
-  if(!fillCtx)return;
-  if(fillCtx.exitFor){confirmLiveExit(fillCtx.exitFor,
-    isNaN(price)?null:price);}
-  else{openPosition(fillCtx.s,fillCtx.v,isNaN(price)?null:price);
-    toast("LIVE position tracked: "+fillCtx.v.symbol);}
-  fillCtx=null;render();
-};
-$("fillNo").onclick=()=>{$("fillDlg").close();fillCtx=null;render();};
 
 function populateFilters(){
   const sel=$("f_inst");const cur=sel.value;
