@@ -45,26 +45,47 @@ Kite), R-based journal and expectancy. Verify lot sizes (NIFTY 75,
 BANKNIFTY 35 shipped) and expiry weekday against current circulars.
 -->
 <style>
+/* Light (Kite/Groww-style) is the default; dark is an explicit opt-in via
+   the header toggle, persisted in cfg.theme. Canvas drawing reads these
+   through chartPalette() (getComputedStyle) so charts/indicators/sparks
+   follow the toggle too, not just DOM elements. */
 :root{
+  --ink:#f2f4f8; --panel:#ffffff; --panel2:#f7f8fb; --line:#e3e7ee;
+  --text:#1a2233; --mute:#69738a; --up:#0e9f6e; --down:#e0333f;
+  --act:#2f6fed; --act-ink:#ffffff;
+  --mono:ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --shadow:0 1px 2px rgba(20,30,50,.06);
+}
+:root[data-theme="dark"]{
   --ink:#0b0e14; --panel:#131824; --panel2:#0f131d; --line:#1f2736;
   --text:#e6eaf2; --mute:#8a93a6; --up:#2ecc8f; --down:#ff5c5c;
   --act:#f5b942; --act-ink:#231a05;
-  --mono:ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace;
-  --sans:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
 }
 *{box-sizing:border-box;margin:0}
-body{background:var(--ink);color:var(--text);font:14px/1.45 var(--sans);
-  padding-bottom:60px}
+html,body{height:100%}
+body{background:var(--ink);color:var(--text);font:14px/1.45 var(--sans)}
 .wrap{max-width:1400px;margin:0 auto;padding:0 16px}
-.shell{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
-.main{min-width:0}
-.rail{position:sticky;top:64px;display:flex;flex-direction:column;gap:16px}
+.shell{display:grid;grid-template-columns:200px 1fr 340px;gap:20px}
+.watchcol,.main,.rail{min-width:0}
+.rail{display:flex;flex-direction:column;gap:16px}
+@media(min-width:981px){
+  body{height:100vh;overflow:hidden;display:flex;flex-direction:column}
+  header{flex:none}
+  .appbody{flex:1;min-height:0;overflow:hidden;display:flex}
+  .appbody .wrap{flex:1;min-height:0}
+  .shell{height:100%;padding-top:16px;padding-bottom:16px}
+  .watchcol,.main,.rail{height:100%;overflow-y:auto}
+}
 @media(max-width:980px){
+  body{padding-bottom:60px}
   .shell{grid-template-columns:1fr}
-  .rail{position:static}
+  .watchcol{margin-bottom:16px}
 }
 header{position:sticky;top:0;z-index:5;background:rgba(11,14,20,.93);
   backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+:root:not([data-theme="dark"]) header{background:rgba(255,255,255,.9)}
 .strip{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 0}
 .wordmark{font:600 12px/1 var(--sans);letter-spacing:.18em;
   text-transform:uppercase;color:var(--mute)}
@@ -107,6 +128,7 @@ h2{font:600 11px/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;
   border-left:3px solid var(--act);border-radius:8px;
   padding:14px 16px 10px;margin-bottom:10px;animation:arrive .25s ease-out}
 @keyframes arrive{from{transform:translateY(-6px);opacity:0}}
+.sig.noanim,.posrow.noanim{animation:none}
 @media (prefers-reduced-motion:reduce){.sig{animation:none}}
 .top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .pill{font:700 11px var(--sans);padding:3px 8px;border-radius:4px}
@@ -183,8 +205,10 @@ canvas.ind:last-of-type{border-radius:0 0 8px 8px}
 .indtoggle{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px}
 canvas.spark{width:100%;height:46px;background:none;border:none;
   border-radius:0;margin:4px 0 0;cursor:default}
-.posrow{border-top:1px solid var(--line);padding:10px 0}
+.posrow{border-top:1px solid var(--line);padding:10px 0;
+  animation:arrive .2s ease-out}
 .posrow:first-child{border-top:none;padding-top:2px}
+@media (prefers-reduced-motion:reduce){.posrow{animation:none}}
 .pbar{height:5px;background:var(--line);border-radius:3px;margin:8px 0 4px;
   overflow:hidden}
 .pbar i{display:block;height:100%;background:var(--up)}
@@ -197,22 +221,48 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
 .pbadge{font:700 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;
   padding:3px 7px;border-radius:4px;background:rgba(245,185,66,.15);
   color:var(--act);white-space:nowrap}
+.pbadge.exitneed{background:rgba(255,92,92,.18);color:var(--down);
+  animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.pbadge.exitneed{animation:none}}
 .stale-note{font:11px var(--mono);color:var(--down);margin-top:4px}
-.toggle{position:relative;display:inline-block;width:38px;height:22px;flex:none}
-.toggle input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
-.toggle .slider{position:absolute;inset:0;background:var(--line);
-  border-radius:22px;transition:.15s;pointer-events:none}
-.toggle .slider:before{content:"";position:absolute;width:16px;height:16px;
-  left:3px;top:3px;background:var(--text);border-radius:50%;transition:.15s}
-.toggle input:checked+.slider{background:var(--act)}
-.toggle input:checked+.slider:before{transform:translateX(16px);background:var(--act-ink)}
-.toggle input:focus-visible+.slider{outline:2px solid var(--act);outline-offset:2px}
-.stratrow{display:flex;align-items:flex-start;gap:12px;padding:10px 0;
-  border-top:1px solid var(--line)}
+.stratrow{display:flex;align-items:center;gap:10px;padding:9px 0;
+  border-top:1px solid var(--line);position:relative;flex-wrap:wrap}
 .stratrow:first-child{border-top:none;padding-top:2px}
-.stratinfo{flex:1;min-width:0}
-.stratname{font:600 14px var(--sans)}
+.stratrow input[type=checkbox]{width:16px;height:16px;accent-color:var(--act);
+  flex:none;cursor:pointer}
+.stratname{font:600 13px var(--sans);cursor:pointer;margin-right:auto}
+.stratchip{font:12px var(--mono);padding:3px 8px;border-radius:5px;
+  background:var(--panel2);border:1px solid var(--line);white-space:nowrap}
+.stratchip.muted{color:var(--mute)}
+.stratchip i{font-style:normal;color:var(--mute);font-size:10px;margin-left:3px}
+.infobtn{font:12px var(--sans);width:20px;height:20px;line-height:1;
+  border-radius:50%;border:1px solid var(--line);background:var(--panel2);
+  color:var(--mute);cursor:pointer;flex:none;padding:0;text-align:center}
+.infobtn:hover{color:var(--text);border-color:var(--mute)}
+.stratpop{position:absolute;top:100%;right:0;margin-top:6px;z-index:4;
+  width:min(320px,90vw);background:var(--panel);border:1px solid var(--line);
+  border-radius:8px;padding:12px 14px;box-shadow:0 8px 24px rgba(20,30,50,.2)}
+.stratdesc{font:12px var(--sans);color:var(--text);margin-bottom:6px}
 .stratmeta{font:11px var(--mono);color:var(--mute);margin-top:3px}
+.wlrow{display:flex;align-items:baseline;gap:8px;padding:8px 2px;
+  border-top:1px solid var(--line);cursor:pointer;font:13px var(--mono);
+  transition:background .12s}
+.wlrow:first-child{border-top:none}
+.wlrow:hover{background:var(--panel2)}
+.wlname{flex:1;font:600 12px var(--sans);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.wlltp{font-weight:600}
+.wlage{font-size:10px;color:var(--mute);min-width:60px;text-align:right}
+.wlrow.stale .wlage{color:var(--down)}
+.tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--line);
+  flex-wrap:wrap}
+.tabbtn{background:transparent;border:none;border-bottom:2px solid transparent;
+  padding:8px 12px;font:600 12px var(--sans);color:var(--mute);cursor:pointer;
+  letter-spacing:.04em;text-transform:uppercase}
+.tabbtn.on{color:var(--text);border-color:var(--act)}
+.tabbtn:hover:not(.on){color:var(--text)}
+.themebtn{font-size:15px;line-height:1;padding:6px 9px}
 .check{display:flex;flex-direction:column;gap:6px;font-size:13px}
 .check .ok{color:var(--up)}.check .todo{color:var(--mute)}
 @media(max-width:620px){
@@ -238,10 +288,10 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
     <span id="halted" class="halt-note" hidden>halted</span>
     <button id="haltBtn" class="ghost">Halt today</button>
     <button id="alertBtn" class="ghost">Enable alerts</button>
+    <button id="themeBtn" class="ghost themebtn" title="Switch theme">🌙</button>
     <button id="setBtn" class="ghost">Settings</button>
     <span class="dayr"><small>day</small><span id="dayr">+0.00R</span></span>
   </div>
-  <div class="tape" id="tape"></div>
   <nav>
     <a href="#desk" id="nav_desk" class="on">Desk</a>
     <a href="#dash" id="nav_dash">Dashboard</a>
@@ -249,13 +299,19 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
   </nav>
 </div></header>
 
-<div class="wrap shell">
+<div class="appbody"><div class="wrap shell">
+<aside class="watchcol">
+  <div class="panel">
+    <h2>Watchlist</h2>
+    <div id="watchlist"></div>
+  </div>
+</aside>
 <div class="main">
 
 <!-- ============================ DESK VIEW ============================== -->
 <div id="view_desk">
   <div id="feedBanner" class="banner" hidden></div>
-  <div class="panel" id="setupCard" style="margin-top:16px" hidden></div>
+  <div class="banner warn" id="setupCard" style="margin-top:16px" hidden></div>
 
   <section>
     <h2>Strategies</h2>
@@ -333,80 +389,95 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
   </div>
 </aside>
 
-</div><!-- /.shell -->
+</div><!-- /.shell --></div><!-- /.appbody -->
 
 <div id="toasts"></div>
 
 <dialog id="settings">
   <h2 style="margin-bottom:14px">Settings</h2>
-  <div class="frow"><label>Mode</label>
-    <select id="s_mode"><option>PAPER</option><option>LIVE-ASSIST</option></select></div>
-  <div class="frow"><label>Kite Publisher api_key</label>
-    <input id="s_pubkey" placeholder="free — developers.kite.trade" size="24"></div>
+  <div class="tabs" id="setTabs">
+    <button type="button" class="tabbtn on" data-tab="general">General</button>
+    <button type="button" class="tabbtn" data-tab="watchlist">Watchlist</button>
+    <button type="button" class="tabbtn" data-tab="sync">Sync</button>
+    <button type="button" class="tabbtn" data-tab="data">Data</button>
+  </div>
 
-  <h2 style="margin:14px 0 8px">OneDrive sync</h2>
-  <div class="frow"><label>Azure app client ID</label>
-    <input id="s_msid" placeholder="reuse Clario One's registration" size="30"></div>
-  <div class="frow">
-    <button id="s_connect" class="ghost">Connect OneDrive</button>
-    <button id="s_syncnow" class="ghost">Sync now</button>
-    <button id="s_disconnect" class="ghost">Disconnect</button>
-    <span class="note" id="s_syncstate"></span></div>
-  <details><summary>Setup (one-time — or reuse Clario One's app registration)</summary>
-    <p class="note">Reuse: portal.azure.com → App registrations → your Clario
-    One app → Authentication → add this page's exact URL as a Single-page
-    application redirect URI → API permissions: delegated
-    <code>Files.ReadWrite.AppFolder</code> + <code>offline_access</code>.
-    Paste the same Application (client) ID above. New app: same steps under
-    a fresh registration. Data lives at
-    <code>OneDrive/Apps/&lt;app&gt;/algo_desk.json</code>. Sync requires the
-    page to be hosted (GitHub Pages) — Microsoft doesn't allow
-    <code>file://</code> redirect URIs.</p></details>
+  <div class="tabpane" data-pane="general">
+    <div class="frow"><label>Mode</label>
+      <select id="s_mode"><option>PAPER</option><option>LIVE-ASSIST</option></select></div>
+    <div class="frow"><label>Kite Publisher api_key</label>
+      <input id="s_pubkey" placeholder="free — developers.kite.trade" size="24"></div>
+    <div class="frow" style="margin-top:8px"><label>Monthly expiry weekday</label>
+      <select id="s_expday"><option value="2">Tuesday</option>
+        <option value="4">Thursday</option></select></div>
+    <div class="frow"><label>Poll every (seconds)</label>
+      <input id="s_poll" type="number" value="20" min="10" style="width:70px">
+      <label style="min-width:0">Signal validity (s)</label>
+      <input id="s_ttl" type="number" value="180" style="width:70px"></div>
+    <div class="frow"><label>Max open positions</label>
+      <input id="s_maxpos" type="number" value="2" style="width:70px">
+      <label style="min-width:0">Daily loss halt (R)</label>
+      <input id="s_maxloss" type="number" value="3" step="0.5" style="width:70px"></div>
+    <div class="frow"><label>Capital (₹, for risk %)</label>
+      <input id="s_cap" type="number" value="0" style="width:110px">
+      <label style="min-width:0">Cost / round trip (₹)</label>
+      <input id="s_cost" type="number" value="100" style="width:80px"></div>
+    <div class="frow"><label>Signal sound</label>
+      <label style="min-width:0"><input type="checkbox" id="s_sound" checked>
+        beep on signal / exit</label></div>
+    <p class="note">Strategy on/off toggles live on the Strategies card on the
+      Desk screen — each shows its backtested and live track record.</p>
+  </div>
 
-  <h2 style="margin:14px 0 8px">Watchlist</h2>
-  <div id="watchrows"></div>
-  <div class="frow"><button id="s_add" class="ghost mini">+ Add instrument</button>
-    <span class="note">Name: NIFTY 50, BANKNIFTY, or an NSE stock symbol
-    (e.g. RELIANCE). Verify lot sizes against current circulars.</span></div>
+  <div class="tabpane hide" data-pane="watchlist">
+    <div id="watchrows"></div>
+    <div class="frow"><button id="s_add" class="ghost mini">+ Add instrument</button>
+      <span class="note">Name: NIFTY 50, BANKNIFTY, or an NSE stock symbol
+      (e.g. RELIANCE). Verify lot sizes against current circulars.</span></div>
+  </div>
 
-  <div class="frow" style="margin-top:8px"><label>Monthly expiry weekday</label>
-    <select id="s_expday"><option value="2">Tuesday</option>
-      <option value="4">Thursday</option></select></div>
-  <div class="frow"><label>Poll every (seconds)</label>
-    <input id="s_poll" type="number" value="20" min="10" style="width:70px">
-    <label style="min-width:0">Signal validity (s)</label>
-    <input id="s_ttl" type="number" value="180" style="width:70px"></div>
-  <div class="frow"><label>Max open positions</label>
-    <input id="s_maxpos" type="number" value="2" style="width:70px">
-    <label style="min-width:0">Daily loss halt (R)</label>
-    <input id="s_maxloss" type="number" value="3" step="0.5" style="width:70px"></div>
-  <div class="frow"><label>Capital (₹, for risk %)</label>
-    <input id="s_cap" type="number" value="0" style="width:110px">
-    <label style="min-width:0">Cost / round trip (₹)</label>
-    <input id="s_cost" type="number" value="100" style="width:80px"></div>
-  <div class="frow"><label>Signal sound</label>
-    <label style="min-width:0"><input type="checkbox" id="s_sound" checked>
-      beep on signal / exit</label></div>
-  <p class="note">Strategy on/off toggles moved to the Strategies card on the
-    Desk screen — each shows its backtested and live track record.</p>
-  <div class="frow"><label>Custom data relay URL</label>
-    <input id="s_relay" placeholder="optional — leave blank for public proxy" size="30"></div>
-  <details><summary>Own data relay (recommended, free Cloudflare Worker)</summary>
-    <pre>export default { async fetch(req) {
+  <div class="tabpane hide" data-pane="sync">
+    <div class="frow"><label>Azure app client ID</label>
+      <input id="s_msid" placeholder="reuse Clario One's registration" size="30"></div>
+    <div class="frow">
+      <button id="s_connect" class="ghost">Connect OneDrive</button>
+      <button id="s_syncnow" class="ghost">Sync now</button>
+      <button id="s_disconnect" class="ghost">Disconnect</button>
+      <span class="note" id="s_syncstate"></span></div>
+    <details><summary>Setup (one-time — or reuse Clario One's app registration)</summary>
+      <p class="note">Reuse: portal.azure.com → App registrations → your Clario
+      One app → Authentication → add this page's exact URL as a Single-page
+      application redirect URI → API permissions: delegated
+      <code>Files.ReadWrite.AppFolder</code> + <code>offline_access</code>.
+      Paste the same Application (client) ID above. New app: same steps under
+      a fresh registration. Data lives at
+      <code>OneDrive/Apps/&lt;app&gt;/algo_desk.json</code>. Sync requires the
+      page to be hosted (GitHub Pages) — Microsoft doesn't allow
+      <code>file://</code> redirect URIs.</p></details>
+  </div>
+
+  <div class="tabpane hide" data-pane="data">
+    <div class="frow"><label>Custom data relay URL</label>
+      <input id="s_relay" placeholder="optional — leave blank for public proxy" size="30"></div>
+    <details><summary>Own data relay (recommended, free Cloudflare Worker)</summary>
+      <pre>export default { async fetch(req) {
   const u = new URL(req.url).searchParams.get("u");
   const r = await fetch(u, {headers:{"User-Agent":"Mozilla/5.0"}});
   return new Response(await r.text(), {headers:{
     "Content-Type":"application/json",
     "Access-Control-Allow-Origin":"*"}});
 }}</pre>
-    <p class="note">dash.cloudflare.com → Workers → Create → paste → Deploy.
-    Relay URL here: <code>https://yourworker.workers.dev/?u=</code></p></details>
-  <div class="frow" style="margin-top:14px">
-    <button id="s_save" class="primary">Save</button>
-    <button id="s_export" class="ghost">Export journal</button>
-    <button id="s_import" class="ghost">Import journal</button>
-    <input type="file" id="s_file" accept=".json" hidden>
-    <button id="s_wipe" class="danger">Wipe journal</button></div>
+      <p class="note">dash.cloudflare.com → Workers → Create → paste → Deploy.
+      Relay URL here: <code>https://yourworker.workers.dev/?u=</code></p></details>
+    <div class="frow" style="margin-top:14px">
+      <button id="s_export" class="ghost">Export journal</button>
+      <button id="s_import" class="ghost">Import journal</button>
+      <input type="file" id="s_file" accept=".json" hidden>
+      <button id="s_wipe" class="danger">Wipe journal</button></div>
+  </div>
+
+  <div class="frow" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px">
+    <button id="s_save" class="primary">Save</button></div>
 </dialog>
 
 <form method="post" id="kiteForm" action="https://kite.zerodha.com/connect/basket"
@@ -641,7 +712,7 @@ const DEF_WATCH=[
 ];
 const DEFAULTS={mode:"PAPER",pubkey:"",expday:2,poll:20,ttl:180,maxpos:2,
   maxlossR:3,orb:true,ema:true,morning:true,relay:"",watch:DEF_WATCH,msid:"",
-  capital:0,cost:100,sound:true,setupDone:false,
+  capital:0,cost:100,sound:true,setupDone:false,theme:"light",
   cfgUpdated:0};
 let store={set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){this.mem[k]=v;}},
   get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):
@@ -658,6 +729,11 @@ trades.forEach(t=>{if(!t.id){t.id=t.closed+"-"+Math.random().toString(36).slice(
 if(migrated)store.set("trades",trades);
 
 let pending={}, positions={}, halted=false, sqOff=false;
+/* render() fully rebuilds these lists every poll tick, so without tracking
+   which ids were already on screen, the "arrive" entrance animation would
+   replay for unchanged cards every ~20s — exactly the kind of restless
+   flicker this redesign is meant to remove. */
+let _seenSigIds=new Set(), _seenPosIds=new Set();
 
 let INST=[];
 function initInstruments(){
@@ -848,7 +924,7 @@ function execSignal(id){
 }
 function openPosition(s,v,fillPrice){
   positions[s.id]={sig:s,symbol:v.symbol,exchange:v.exchange,qty:v.qty,
-    orderSide:v.orderSide,fill:fillPrice,opened:Date.now()};
+    orderSide:v.orderSide,fill:fillPrice,opened:Date.now(),mode:cfg.mode};
 }
 /* Checks the running 5-min bar's high/low (built from every polled tick),
    not just the latest tick — a price that spikes through SL/target and
@@ -873,37 +949,54 @@ function checkExits(inst,price,t){
     else if(hitTgt)closePosition(id,s.target,"Target hit");
   }
 }
+/* LIVE-ASSIST exits must never auto-submit to Kite from here: this runs
+   from the background poll loop, not a user gesture, and browsers silently
+   block a form-submit/new-tab navigation that isn't a direct click — the
+   Kite tab would just never open, with no error, no order placed, and the
+   position stuck open past its stop. Instead this only *flags* the exit;
+   sendExit() below does the actual Kite submission from a real click. */
 function closePosition(id,undPrice,reason){
   const p=positions[id]; if(!p)return;
-  if(cfg.mode==="LIVE-ASSIST"&&!p._exitSent){
-    p._exitSent=true; p._exitReason=reason; p._exitUnd=undPrice;
-    const exitSide=(p.sig.vehicle==="OPTION"||p.orderSide==="BUY")?"SELL":"BUY";
+  if(p._exitNeeded||p._exitSent)return;
+  if(cfg.mode==="LIVE-ASSIST"){
+    p._exitNeeded=true; p._exitReason=reason; p._exitUnd=undPrice;
     beep();
-    notify("EXIT "+p.symbol,reason+" — confirm in Kite now");
-    sendToKite([{variety:"regular",exchange:p.exchange,tradingsymbol:p.symbol,
-      transaction_type:exitSide,quantity:p.qty,order_type:"MARKET",
-      product:"MIS",readonly:false}]);
+    notify("EXIT NEEDED — "+p.symbol,reason+" — tap Send to Kite now");
     render(); return;
   }
   journalClose(p,undPrice,reason,null);
   delete positions[id]; render();
 }
+function sendExit(id){
+  const p=positions[id]; if(!p||!p._exitNeeded)return;
+  p._exitNeeded=false; p._exitSent=true;
+  const exitSide=(p.sig.vehicle==="OPTION"||p.orderSide==="BUY")?"SELL":"BUY";
+  sendToKite([{variety:"regular",exchange:p.exchange,tradingsymbol:p.symbol,
+    transaction_type:exitSide,quantity:p.qty,order_type:"MARKET",
+    product:"MIS",readonly:false}]);
+  toast("Exit order sent to Kite — record the fill below.");
+  render();
+}
 function journalClose(p,undPrice,reason,exitFill){
   const r=rMultiple(p.sig,undPrice);
-  let rupees=null;
-  if(p.sig.vehicle!=="OPTION"&&cfg.mode==="PAPER"){
+  const mode=p.mode||cfg.mode;
+  let rupees=null, rupeesExact=false;
+  /* Options' premium doesn't move 1:1 with the underlying, so an estimate
+     from undPrice would be wrong — only FUT/EQUITY get an estimate here. */
+  if(p.sig.vehicle!=="OPTION"&&undPrice!=null){
     const dir=p.sig.side==="BUY"?1:-1;
     rupees=(undPrice-p.sig.entry)*dir*p.qty;
   }
   if(exitFill!=null&&p.fill!=null){
     rupees=(exitFill-p.fill)*p.qty*
       ((p.sig.vehicle==="OPTION"||p.orderSide==="BUY")?1:-1);
+    rupeesExact=true;
   }
   trades.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,8),
     closed:Date.now(),symbol:p.symbol,side:p.sig.side,
     strategy:p.sig.strategy,underlying:p.sig.underlying,
-    vehicle:p.sig.vehicle,reason,r:+r.toFixed(3),rupees,
-    cost:+cfg.cost||0,mode:cfg.mode});
+    vehicle:p.sig.vehicle,reason,r:+r.toFixed(3),rupees,rupeesExact,
+    cost:+cfg.cost||0,mode});
   store.set("trades",trades);
   OD.pushSoon();
   toast((r>=0?"🟢":"🔴")+" Closed "+p.symbol+" — "+reason+" · "
@@ -1060,11 +1153,11 @@ const OD={
 };
 /* mode never syncs — LIVE is a deliberate per-device choice */
 function cfgForSync(){
-  const c=Object.assign({},cfg);delete c.mode;return c;
+  const c=Object.assign({},cfg);delete c.mode;delete c.theme;return c;
 }
 function applySyncedCfg(remote,updated){
-  const mode=cfg.mode;
-  cfg=Object.assign({},DEFAULTS,remote,{mode,cfgUpdated:updated});
+  const mode=cfg.mode, theme=cfg.theme;
+  cfg=Object.assign({},DEFAULTS,remote,{mode,theme,cfgUpdated:updated});
   if(!Array.isArray(cfg.watch)||!cfg.watch.length)cfg.watch=DEF_WATCH;
   store.set("cfg",cfg);
   initInstruments();restartPolling();
@@ -1085,9 +1178,32 @@ function renderSync(){
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,
   c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+/* canvas drawing can't use var(--x) directly — resolve the live theme's
+   colors once per draw so charts/indicators/sparks follow the theme toggle */
+function chartPalette(){
+  const cs=getComputedStyle(document.documentElement);
+  const v=n=>cs.getPropertyValue(n).trim();
+  return {up:v("--up"),down:v("--down"),act:v("--act"),mute:v("--mute"),
+    line:v("--line"),text:v("--text"),panel:v("--panel"),ink:v("--ink")};
+}
+function renderWatchlist(){
+  const box=$("watchlist"); if(!box)return;
+  box.innerHTML=INST.map(i=>{
+    const age=i.qts?Math.round((Date.now()-i.qts)/1000):null;
+    const ok=fresh(i);
+    return `<div class="wlrow${ok?"":" stale"}" onclick="chartSel('${esc(i.w.name)}')">
+      <div class="wlname">${esc(i.w.name)}</div>
+      <div class="wlltp">${i.spot?i.spot.toFixed(1):"—"}</div>
+      <div class="wlage">${age==null?"no data":age+"s"+(ok?"":" · paused")}</div>
+    </div>`;
+  }).join("");
+}
 const fmtR=r=>(r>=0?"+":"")+r.toFixed(2)+"R";
 const fmtRs=v=>v==null?"—":(v<0?"−₹":"₹")
   +Math.abs(v).toLocaleString("en-IN",{maximumFractionDigits:0});
+/* "≈" marks an estimate derived from the underlying's move, not an exact
+   broker fill — never let an estimate be mistaken for a confirmed figure */
+const rupeeCell=t=>t.rupees==null?"—":(t.rupeesExact?"":"≈")+fmtRs(t.rupees);
 function toast(text,level){
   const t=document.createElement("div");
   t.className="toast "+(level||"");t.textContent=text;
@@ -1125,7 +1241,7 @@ function favicon(hot){
 let _flip=false;
 setInterval(()=>{
   const need=Object.keys(pending).length>0
-    ||Object.values(positions).some(p=>p._exitSent);
+    ||Object.values(positions).some(p=>p._exitSent||p._exitNeeded);
   if(need){_flip=!_flip;
     document.title=(_flip?"● ":"")+"ACTION — Nifty Algo";
     favicon(_flip);}
@@ -1157,13 +1273,6 @@ function renderHeader(){
         +"Signals are paused until quotes resume.";
     }else bn.hidden=true;
   }
-  $("tape").innerHTML=INST.map(i=>{
-    const age=i.qts?Math.round((Date.now()-i.qts)/1000):null;
-    const st=fresh(i)?"":"stale";
-    return `<span class="${st}">${esc(i.w.name)}
-      <b>${i.spot?i.spot.toFixed(1):"—"}</b>
-      ${age==null?"no data":age+"s"}${fresh(i)?"":" · paused"}</span>`;
-  }).join("");
   const dr=dayR();
   const d=$("dayr");d.textContent=fmtR(dr);
   d.className="dayr "+(dr<0?"neg":"pos");
@@ -1183,26 +1292,44 @@ const STRAT_META=[
     tag:"Supertrend flip + VWAP, 09:45–11:00 IST",
     backtest:{years:10.5,win:55,pf:1.37,avgR:0.121,sample:"out-of-sample"}},
 ];
+/* Success ratio sits right on the row (checkbox to pick, ratio to judge) —
+   backtested win% where we have it, otherwise the live win% so there's
+   always a number, each clearly labeled with where it came from. The (i)
+   popover carries the rest: description, full backtest line, full live
+   line — detail on demand instead of everything crammed into the row. */
 function renderStrategyPicker(){
   const box=$("stratPicker"); if(!box)return;
   box.innerHTML=STRAT_META.map(m=>{
     const live=statPack(trades.filter(x=>x.strategy===m.code));
-    const liveTxt=live
-      ?`live: ${live.n} trade${live.n===1?"":"s"} · `
-        +`${live.win_pct.toFixed(0)}% win · ${fmtR(live.expectancy)}/trade`
-      :"live: no closed trades yet";
-    const btTxt=m.backtest
-      ?`backtest: ${m.backtest.win}% win · PF ${m.backtest.pf} · `
+    const headlineWin=m.backtest?m.backtest.win:(live?Math.round(live.win_pct):null);
+    const headlineSrc=m.backtest?"backtest":"live";
+    const winChip=headlineWin==null
+      ?`<span class="stratchip muted">no data yet</span>`
+      :`<span class="stratchip">${headlineWin}% win<i>${headlineSrc}</i></span>`;
+    const expVal=m.backtest?m.backtest.avgR:(live?live.expectancy:null);
+    const expSrc=m.backtest?"backtest":"live";
+    const expChip=expVal==null?"":
+      `<span class="stratchip">${fmtR(expVal)}/trade<i>${expSrc}</i></span>`;
+    const btLine=m.backtest
+      ?`Backtest: ${m.backtest.win}% win · PF ${m.backtest.pf} · `
         +`${fmtR(m.backtest.avgR)}/trade · ${m.backtest.years}y ${m.backtest.sample}`
-      :"no external backtest on file — judge by the live line below";
+      :"No external backtest on file for this strategy.";
+    const liveLine=live
+      ?`Live journal: ${live.n} trade${live.n===1?"":"s"} · `
+        +`${live.win_pct.toFixed(0)}% win · ${fmtR(live.expectancy)}/trade · `
+        +`PF ${live.profit_factor===Infinity?"∞":live.profit_factor.toFixed(2)}`
+      :"Live journal: no closed trades yet.";
     return `<div class="stratrow">
-      <label class="toggle"><input type="checkbox" data-strat="${m.flag}"
-        ${cfg[m.flag]?"checked":""}><span class="slider"></span></label>
-      <div class="stratinfo">
-        <div class="stratname">${esc(m.name)}
-          <span class="tag">${esc(m.tag)}</span></div>
-        <div class="stratmeta">${esc(btTxt)}</div>
-        <div class="stratmeta">${esc(liveTxt)}</div>
+      <input type="checkbox" data-strat="${m.flag}" id="strat_${m.flag}"
+        ${cfg[m.flag]?"checked":""}>
+      <label for="strat_${m.flag}" class="stratname">${esc(m.name)}</label>
+      ${winChip}${expChip}
+      <button class="infobtn" type="button" data-infobtn="${m.flag}"
+        aria-label="${esc(m.name)} details">ⓘ</button>
+      <div class="stratpop" data-pop="${m.flag}" hidden>
+        <div class="stratdesc">${esc(m.tag)}</div>
+        <div class="stratmeta">${esc(btLine)}</div>
+        <div class="stratmeta">${esc(liveLine)}</div>
       </div>
     </div>`;
   }).join("");
@@ -1213,15 +1340,28 @@ function renderStrategyPicker(){
       toast((el.checked?"Enabled ":"Disabled ")+el.dataset.strat.toUpperCase());
     };
   });
+  box.querySelectorAll("[data-infobtn]").forEach(btn=>{
+    btn.onclick=e=>{
+      e.stopPropagation();
+      const pop=box.querySelector(`.stratpop[data-pop="${btn.dataset.infobtn}"]`);
+      const opening=pop.hidden;
+      box.querySelectorAll(".stratpop").forEach(p=>p.hidden=true);
+      pop.hidden=!opening;
+    };
+  });
 }
+document.addEventListener("click",()=>{
+  document.querySelectorAll(".stratpop").forEach(p=>p.hidden=true);
+});
 function drawCurve(rs){
   const cv=$("curve"), ctx=cv.getContext("2d");
+  const P=chartPalette();
   const W=cv.width=cv.clientWidth*devicePixelRatio||600;
   const H=cv.height=170*devicePixelRatio;
   ctx.clearRect(0,0,W,H);
   ctx.font=(11*devicePixelRatio)+"px ui-monospace,Menlo,monospace";
   if(rs.length<1){
-    ctx.fillStyle="#8a93a6";
+    ctx.fillStyle=P.mute;
     ctx.fillText("Equity curve (cumulative R) appears after closed trades.",
       12*devicePixelRatio,24*devicePixelRatio);
     return;
@@ -1231,14 +1371,14 @@ function drawCurve(rs){
   const pad=14*devicePixelRatio;
   const X=i=>pad+(W-2*pad)*i/(pts.length-1||1);
   const Y=v=>H-pad-(H-2*pad)*(v-mn)/span;
-  ctx.strokeStyle="#1f2736";ctx.lineWidth=devicePixelRatio;
+  ctx.strokeStyle=P.line;ctx.lineWidth=devicePixelRatio;
   ctx.beginPath();ctx.moveTo(pad,Y(0));ctx.lineTo(W-pad,Y(0));ctx.stroke();
-  ctx.strokeStyle=pts[pts.length-1]>=0?"#2ecc8f":"#ff5c5c";
+  ctx.strokeStyle=pts[pts.length-1]>=0?P.up:P.down;
   ctx.lineWidth=2*devicePixelRatio;
   ctx.beginPath();
   pts.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
   ctx.stroke();
-  ctx.fillStyle="#8a93a6";
+  ctx.fillStyle=P.mute;
   ctx.fillText(fmtR(pts[pts.length-1])+" over "+rs.length+" trades",
     pad,16*devicePixelRatio);
 }
@@ -1246,11 +1386,12 @@ function drawRolling(rs){
   const cv=$("rolling"); if(!cv)return;
   const dpr=devicePixelRatio||1;
   const ctx=cv.getContext("2d");
+  const P=chartPalette();
   const W=cv.width=cv.clientWidth*dpr||600;
   const H=cv.height=120*dpr;
   ctx.clearRect(0,0,W,H);
   ctx.font=(11*dpr)+"px ui-monospace,Menlo,monospace";
-  ctx.fillStyle="#8a93a6";
+  ctx.fillStyle=P.mute;
   if(rs.length<5){
     ctx.fillText("Needs 5+ closed trades. Shows the mean R of the last 20 "
       +"trades at each point — a falling line is a decaying edge.",
@@ -1265,14 +1406,14 @@ function drawRolling(rs){
   const pad=14*dpr;
   const X=i=>pad+(W-2*pad)*i/(roll.length-1||1);
   const Y=v=>H-pad-(H-2*pad)*(v-mn)/span;
-  ctx.strokeStyle="#1f2736";ctx.lineWidth=dpr;
+  ctx.strokeStyle=P.line;ctx.lineWidth=dpr;
   ctx.beginPath();ctx.moveTo(pad,Y(0));ctx.lineTo(W-pad,Y(0));ctx.stroke();
-  ctx.strokeStyle=roll[roll.length-1]>=0?"#2ecc8f":"#ff5c5c";
+  ctx.strokeStyle=roll[roll.length-1]>=0?P.up:P.down;
   ctx.lineWidth=2*dpr;
   ctx.beginPath();
   roll.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
   ctx.stroke();
-  ctx.fillStyle="#8a93a6";
+  ctx.fillStyle=P.mute;
   ctx.fillText("latest: "+fmtR(roll[roll.length-1])+" per trade",
     pad,16*dpr);
 }
@@ -1334,7 +1475,7 @@ function renderDashboard(){
       <td>${esc(t.strategy)}</td><td>${t.side}</td><td>${esc(t.reason)}</td>
       <td>${t.mode==="PAPER"?"P":"L"}</td>
       <td class="r ${t.r<0?"neg":"pos"}">${fmtR(t.r)}</td>
-      <td class="r">${fmtRs(t.rupees)}</td></tr>`;}).join("")+"</table>";
+      <td class="r">${rupeeCell(t)}</td></tr>`;}).join("")+"</table>";
 }
 /* ============================ CHARTS ==================================== */
 let chartFocus=null, chartPage=0;
@@ -1346,30 +1487,39 @@ function candlesFor(inst,n){
 function drawChart(cv,inst,big){
   const dpr=devicePixelRatio||1;
   const ctx=cv.getContext("2d");
+  const P=chartPalette();
   const W=cv.width=cv.clientWidth*dpr||600;
   const H=cv.height=(big?280:120)*dpr;
   ctx.clearRect(0,0,W,H);
   const cs=candlesFor(inst,big?150:60);
   ctx.font=(10*dpr)+"px ui-monospace,Menlo,monospace";
   if(cs.length<2){
-    ctx.fillStyle="#8a93a6";
+    ctx.fillStyle=P.mute;
     ctx.fillText(inst.w.name+" — waiting for data",10*dpr,16*dpr);
     return;
   }
   const hi=Math.max(...cs.map(c=>c.high)), lo=Math.min(...cs.map(c=>c.low));
-  const span=(hi-lo)||1, padT=18*dpr, padB=6*dpr, padX=6*dpr;
+  const span=(hi-lo)||1, padT=18*dpr, padB=16*dpr, padX=6*dpr, padR=52*dpr;
   const Y=v=>padT+(H-padT-padB)*(1-(v-lo)/span);
-  const step=(W-2*padX)/cs.length, bw=Math.max(dpr,step*0.6);
+  const step=(W-padX-padR)/cs.length, bw=Math.max(dpr,step*0.6);
+  /* gridlines + right-side price axis, left-aligned bars in the candle area */
+  ctx.strokeStyle=P.line; ctx.lineWidth=dpr; ctx.fillStyle=P.mute;
+  const gridN=4;
+  for(let g=0; g<=gridN; g++){
+    const v=lo+span*g/gridN, y=Y(v);
+    ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padR,y);ctx.stroke();
+    ctx.fillText(v.toFixed(1), W-padR+4*dpr, y+3*dpr);
+  }
   cs.forEach((c,i)=>{
     const x=padX+step*i+step/2, up=c.close>=c.open;
-    ctx.strokeStyle=ctx.fillStyle=up?"#2ecc8f":"#ff5c5c";
+    ctx.strokeStyle=ctx.fillStyle=up?P.up:P.down;
     ctx.lineWidth=dpr;
     ctx.beginPath();ctx.moveTo(x,Y(c.high));ctx.lineTo(x,Y(c.low));ctx.stroke();
     const y1=Y(Math.max(c.open,c.close)), y2=Y(Math.min(c.open,c.close));
     ctx.fillRect(x-bw/2,y1,bw,Math.max(dpr,y2-y1));
   });
   const closes=cs.map(c=>c.close);
-  [[9,"#f5b942"],[21,"#8a93a6"]].forEach(([n,col])=>{
+  [[9,P.act],[21,P.mute]].forEach(([n,col])=>{
     if(closes.length<n)return;
     const e=ema(closes,n);
     ctx.strokeStyle=col;ctx.lineWidth=dpr;
@@ -1378,19 +1528,25 @@ function drawChart(cv,inst,big){
       i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});
     ctx.stroke();
   });
-  ctx.fillStyle="#e6eaf2";
+  /* time axis: first/last visible candle */
+  ctx.fillStyle=P.mute;
+  ctx.fillText(new Date(cs[0].ts).toTimeString().slice(0,5), padX, H-4*dpr);
+  ctx.fillText(new Date(cs[cs.length-1].ts).toTimeString().slice(0,5),
+    W-padR-32*dpr, H-4*dpr);
+  ctx.fillStyle=P.text;
   ctx.fillText(inst.w.name+"  "+cs[cs.length-1].close.toFixed(1),
     8*dpr,13*dpr);
-  ctx.fillStyle="#8a93a6";
-  ctx.fillText("5m · EMA9/21",W-92*dpr,13*dpr);
+  ctx.fillStyle=P.mute;
+  ctx.fillText("5m · EMA9/21",W-padR-92*dpr,13*dpr);
   cv._meta={cs,padX,step,dpr};
 }
 function drawMACD(cv,cs){
   const dpr=devicePixelRatio||1, ctx=cv.getContext("2d");
+  const P=chartPalette();
   const W=cv.width=cv.clientWidth*dpr||600, H=cv.height=56*dpr;
   ctx.clearRect(0,0,W,H);
   ctx.font=(10*dpr)+"px ui-monospace,Menlo,monospace";
-  if(cs.length<27){ctx.fillStyle="#8a93a6";
+  if(cs.length<27){ctx.fillStyle=P.mute;
     ctx.fillText("MACD — needs 27+ candles",8*dpr,16*dpr);return;}
   const closes=cs.map(c=>c.close);
   const {line,signal:sig,hist}=macd(closes);
@@ -1402,35 +1558,38 @@ function drawMACD(cv,cs){
   const zero=Y(0);
   hist.forEach((v,i)=>{
     const x=padX+step*i+step/2, y=Y(v);
-    ctx.fillStyle=v>=0?"rgba(46,204,143,.55)":"rgba(255,92,92,.55)";
+    ctx.fillStyle=v>=0?P.up:P.down;
+    ctx.globalAlpha=.55;
     ctx.fillRect(x-step*0.3,Math.min(y,zero),Math.max(dpr,step*0.6),
       Math.max(dpr,Math.abs(zero-y)));
+    ctx.globalAlpha=1;
   });
   const stroke=(arr,col)=>{ctx.strokeStyle=col;ctx.lineWidth=dpr;ctx.beginPath();
     arr.forEach((v,i)=>{const x=padX+step*i+step/2;
       i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});ctx.stroke();};
-  stroke(line,"#f5b942"); stroke(sig,"#8a93a6");
-  ctx.fillStyle="#8a93a6";ctx.fillText("MACD 12/26/9",8*dpr,12*dpr);
+  stroke(line,P.act); stroke(sig,P.mute);
+  ctx.fillStyle=P.mute;ctx.fillText("MACD 12/26/9",8*dpr,12*dpr);
 }
 function drawStoch(cv,cs){
   const dpr=devicePixelRatio||1, ctx=cv.getContext("2d");
+  const P=chartPalette();
   const W=cv.width=cv.clientWidth*dpr||600, H=cv.height=56*dpr;
   ctx.clearRect(0,0,W,H);
   ctx.font=(10*dpr)+"px ui-monospace,Menlo,monospace";
-  if(cs.length<14){ctx.fillStyle="#8a93a6";
+  if(cs.length<14){ctx.fillStyle=P.mute;
     ctx.fillText("Stochastic — needs 14+ candles",8*dpr,16*dpr);return;}
   const {k,d}=stochastic(cs);
   const padX=6*dpr, padT=8*dpr, padB=6*dpr;
   const Y=v=>padT+(H-padT-padB)*(1-v/100);
   const step=(W-2*padX)/cs.length;
-  ctx.strokeStyle="#1f2736";ctx.lineWidth=dpr;
+  ctx.strokeStyle=P.line;ctx.lineWidth=dpr;
   [20,80].forEach(v=>{ctx.beginPath();ctx.moveTo(padX,Y(v));
     ctx.lineTo(W-padX,Y(v));ctx.stroke();});
   const stroke=(arr,col)=>{ctx.strokeStyle=col;ctx.lineWidth=dpr;ctx.beginPath();
     arr.forEach((v,i)=>{const x=padX+step*i+step/2;
       i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});ctx.stroke();};
-  stroke(k,"#f5b942"); stroke(d,"#8a93a6");
-  ctx.fillStyle="#8a93a6";ctx.fillText("Stoch 14,3",8*dpr,12*dpr);
+  stroke(k,P.act); stroke(d,P.mute);
+  ctx.fillStyle=P.mute;ctx.fillText("Stoch 14,3",8*dpr,12*dpr);
 }
 /* hover crosshair: shows OHLC + any active indicator values at the candle
    under the cursor, in a floating tooltip positioned within the chartbox */
@@ -1525,6 +1684,7 @@ window.chartNav=d=>{chartPage=Math.max(0,chartPage+d);renderCharts();};
 function drawSpark(cv,inst,g){
   const dpr=devicePixelRatio||1;
   const ctx=cv.getContext("2d");
+  const P=chartPalette();
   const W=cv.width=cv.clientWidth*dpr||500;
   const H=cv.height=46*dpr;
   ctx.clearRect(0,0,W,H);
@@ -1540,12 +1700,12 @@ function drawSpark(cv,inst,g){
     ctx.setLineDash([4*dpr,4*dpr]);
     ctx.beginPath();ctx.moveTo(pad,Y(v));ctx.lineTo(W-pad,Y(v));ctx.stroke();
     ctx.setLineDash([]);};
-  level(g.stop,"#ff5c5c");level(g.target,"#2ecc8f");level(g.entry,"#3a4356");
-  ctx.strokeStyle="#e6eaf2";ctx.lineWidth=1.5*dpr;
+  level(g.stop,P.down);level(g.target,P.up);level(g.entry,P.line);
+  ctx.strokeStyle=P.text;ctx.lineWidth=1.5*dpr;
   ctx.beginPath();
   closes.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));
   ctx.stroke();
-  ctx.fillStyle="#f5b942";
+  ctx.fillStyle=P.act;
   ctx.beginPath();
   ctx.arc(X(closes.length-1),Y(closes[closes.length-1]),2.5*dpr,0,7);
   ctx.fill();
@@ -1554,6 +1714,7 @@ function drawSpark(cv,inst,g){
 function render(){
   renderHeader();
   renderSetup();
+  renderWatchlist();
   renderStrategyPicker();
   renderCharts();
   const sig=Object.values(pending);
@@ -1567,7 +1728,8 @@ function render(){
       const pct=cfg.capital>0?100*riskRs/cfg.capital:null;
       const capTxt=pct!=null?` · ${pct.toFixed(1)}% of capital`
         +(pct>1?" ⚠ over 1%":""):"";
-      return `<div class="sig" data-id="${g.id}" data-created="${g.created}">
+      const isNew=!_seenSigIds.has(g.id);
+      return `<div class="sig${isNew?"":" noanim"}" data-id="${g.id}" data-created="${g.created}">
         <div class="top">
           <span class="pill ${g.side==="BUY"?"buy":"sell"}">${g.side}</span>
           <span class="who">${esc(g.underlying)}</span>
@@ -1591,6 +1753,7 @@ function render(){
           <button class="ghost" onclick="skipSignal('${g.id}')">Skip</button>
           <div class="ttl"><i></i></div><span class="ttl-label"></span></div>
       </div>`;}).join("");
+  _seenSigIds=new Set(sig.map(g=>g.id));
   sig.forEach(g=>{
     const cv=document.querySelector(`[data-spk="${g.id}"]`);
     const inst=instOf(g.underlying);
@@ -1610,7 +1773,13 @@ function render(){
         prog=Math.max(0,Math.min(1,prog));
       }
       let action, badge="";
-      if(p._exitSent){
+      if(p._exitNeeded){
+        badge=`<span class="pbadge exitneed">⚠ EXIT NEEDED</span>`;
+        action=`<div class="row"><span class="tag">${esc(p._exitReason||"Exit condition met")}
+            — this was NOT sent to Kite automatically:</span>
+          <button class="danger mini" onclick="sendExit('${id}')">Send exit to Kite</button>
+          </div>`;
+      }else if(p._exitSent){
         badge=`<span class="pbadge">exit sent — confirm in Kite</span>`;
         action=`<div class="row"><span class="tag">exit sent — record fill:</span>
           <input type="number" step="0.05" style="width:90px" data-xf="${id}">
@@ -1633,7 +1802,8 @@ function render(){
       const staleNote=(!inst||!fresh(inst))
         ?`<div class="stale-note">⚠ feed stale on ${esc(s.underlying)} — SL/target
            checks are paused until quotes resume</div>`:"";
-      return `<div class="posrow">
+      const isNew=!_seenPosIds.has(id);
+      return `<div class="posrow${isNew?"":" noanim"}">
         <div class="top"><span class="who">${esc(p.symbol)}</span>
           <span class="tag">${esc(s.underlying)} · ${esc(s.strategy)} ·
             qty ${p.qty} · ${new Date(p.opened).toTimeString().slice(0,5)}</span>
@@ -1651,6 +1821,7 @@ function render(){
         ${staleNote}
         ${action}</div>`;
     }).join("");
+  _seenPosIds=new Set(pos.map(([id])=>id));
   const today=new Date().toDateString();
   const cl=trades.filter(t=>new Date(t.closed).toDateString()===today)
                  .slice().reverse();
@@ -1662,12 +1833,13 @@ function render(){
         · ${new Date(t.closed).toTimeString().slice(0,5)}</span></td>
        <td>${esc(t.reason)}</td>
        <td class="r ${t.r<0?"neg":"pos"}">${fmtR(t.r)}</td>
-       <td class="r">${fmtRs(t.rupees)}</td></tr>`).join("")+"</table>";
+       <td class="r">${rupeeCell(t)}</td></tr>`).join("")+"</table>";
   if(!$("view_dash").classList.contains("hide")) renderDashboard();
 }
 window.skipSignal=id=>{delete pending[id];render();};
 window.execSignal=execSignal;
 window.manualClose=manualClose;
+window.sendExit=sendExit;
 window.saveFill=id=>{
   const p=positions[id]; if(!p)return;
   const el=document.querySelector(`[data-ff="${id}"]`);
@@ -1697,7 +1869,7 @@ function renderSetup(){
     [!!OD.tok,"OneDrive connected (only needed for multi-device sync)"],
   ];
   card.hidden=false;
-  card.innerHTML="<h2>Setup</h2><div class='check'>"
+  card.innerHTML="<b>First-time setup</b><div class='check' style='margin-top:6px'>"
     +items.map(([ok,txt])=>`<span class="${ok?"ok":"todo"}">
       ${ok?"✓":"○"} ${txt}</span>`).join("")
     +`</div><div class="row"><button class="ghost mini"
@@ -1762,7 +1934,22 @@ function loadSettings(){
   cfg.watch.forEach(w=>box.appendChild(watchRow(w)));
   renderSync();
 }
-$("setBtn").onclick=()=>{loadSettings();$("settings").showModal();};
+document.querySelectorAll("#setTabs .tabbtn").forEach(btn=>{
+  btn.onclick=()=>{
+    document.querySelectorAll("#setTabs .tabbtn").forEach(b=>
+      b.classList.toggle("on",b===btn));
+    document.querySelectorAll(".tabpane").forEach(p=>
+      p.classList.toggle("hide",p.dataset.pane!==btn.dataset.tab));
+  };
+});
+$("setBtn").onclick=()=>{
+  loadSettings();
+  document.querySelectorAll("#setTabs .tabbtn").forEach((b,i)=>
+    b.classList.toggle("on",i===0));
+  document.querySelectorAll(".tabpane").forEach((p,i)=>
+    p.classList.toggle("hide",i!==0));
+  $("settings").showModal();
+};
 $("s_add").onclick=()=>$("watchrows").appendChild(
   watchRow({name:"",vehicle:"EQUITY",lots:1,lotsize:1,step:50}));
 $("s_connect").onclick=()=>{
@@ -1818,6 +2005,17 @@ $("s_wipe").onclick=()=>{
   if(confirm("Wipe the entire journal (local + next sync overwrites "
              +"OneDrive)? Export first if you want a backup.")){
     trades=[];store.set("trades",trades);render();OD.pushSoon();}
+};
+/* theme: light default, dark opt-in; stays a local per-device choice (like
+   mode) and is excluded from OneDrive sync above */
+function applyTheme(){
+  document.documentElement.dataset.theme=cfg.theme==="dark"?"dark":"light";
+  $("themeBtn").textContent=cfg.theme==="dark"?"☀️":"🌙";
+}
+applyTheme();
+$("themeBtn").onclick=()=>{
+  cfg.theme=cfg.theme==="dark"?"light":"dark";
+  store.set("cfg",cfg);applyTheme();render();
 };
 $("haltBtn").onclick=()=>{halted=!halted;if(!halted)sqOff=false;render();};
 $("alertBtn").onclick=async()=>{
