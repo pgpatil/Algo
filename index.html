@@ -67,7 +67,7 @@ BANKNIFTY 35 shipped) and expiry weekday against current circulars.
 html,body{height:100%}
 body{background:var(--ink);color:var(--text);font:14px/1.45 var(--sans)}
 .wrap{max-width:1400px;margin:0 auto;padding:0 16px}
-.shell{display:grid;grid-template-columns:200px 1fr 340px;gap:20px}
+.shell{display:grid;grid-template-columns:260px 1fr 340px;gap:20px}
 .watchcol,.main,.rail{min-width:0}
 .rail{display:flex;flex-direction:column;gap:16px}
 @media(min-width:981px){
@@ -203,6 +203,15 @@ canvas.ind:last-of-type{border-radius:0 0 8px 8px}
   box-shadow:0 4px 14px rgba(0,0,0,.45);transform:translate(-50%,-108%)}
 .chart-tip .pos{color:var(--up)}.chart-tip .neg{color:var(--down)}
 .indtoggle{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 8px}
+.chartlegend{display:flex;gap:16px;flex-wrap:wrap;font:11px var(--sans);
+  color:var(--mute);margin:0 0 8px;align-items:center}
+.chartlegend .mk{display:inline-block;margin-right:5px;vertical-align:middle}
+.chartlegend .mk.buy{width:0;height:0;border-left:5px solid transparent;
+  border-right:5px solid transparent;border-bottom:8px solid var(--up)}
+.chartlegend .mk.sell{width:0;height:0;border-left:5px solid transparent;
+  border-right:5px solid transparent;border-top:8px solid var(--down)}
+.chartlegend .mk.win{width:9px;height:9px;border-radius:50%;background:var(--up)}
+.chartlegend .mk.loss{width:9px;height:9px;border-radius:50%;background:var(--down)}
 canvas.spark{width:100%;height:46px;background:none;border:none;
   border-radius:0;margin:4px 0 0;cursor:default}
 .posrow{border-top:1px solid var(--line);padding:10px 0;
@@ -305,28 +314,34 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
     <h2>Watchlist</h2>
     <div id="watchlist"></div>
   </div>
+  <div class="panel" style="margin-top:16px">
+    <h2>Strategies</h2>
+    <div id="stratPicker"></div>
+  </div>
+  <div class="banner warn" id="setupCard" style="margin-top:16px" hidden></div>
 </aside>
 <div class="main">
 
 <!-- ============================ DESK VIEW ============================== -->
 <div id="view_desk">
   <div id="feedBanner" class="banner" hidden></div>
-  <div class="banner warn" id="setupCard" style="margin-top:16px" hidden></div>
-
-  <section>
-    <h2>Strategies</h2>
-    <div class="panel" id="stratPicker"></div>
-  </section>
 
   <section>
     <h2>Charts — 5-minute</h2>
     <div class="chips" id="chartChips"></div>
     <div class="indtoggle" id="indToggle"></div>
+    <div class="chartlegend">
+      <span><i class="mk buy"></i>Buy entry</span>
+      <span><i class="mk sell"></i>Sell entry</span>
+      <span><i class="mk win"></i>Win exit</span>
+      <span><i class="mk loss"></i>Loss exit</span>
+    </div>
     <div id="charts"></div>
     <p class="note">Tap a chart or chip to focus it; tap again to return to
-      the strip view. Amber line EMA 9, grey EMA 21. Hover a chart for OHLC
-      and indicator values at that candle. Up to 3 strips show at once —
-      use ‹ › for the rest of the watchlist.</p>
+      the strip view. Amber line EMA 9, grey EMA 21. Triangles mark where a
+      trade actually entered, dots where it exited (green win / red loss).
+      Hover a chart for OHLC and indicator values at that candle. Up to 3
+      strips show at once — use ‹ › for the rest of the watchlist.</p>
   </section>
 
   <p class="note">Quotes are best-effort from a public feed — verify price
@@ -728,7 +743,13 @@ trades.forEach(t=>{if(!t.id){t.id=t.closed+"-"+Math.random().toString(36).slice(
   migrated=true;}});
 if(migrated)store.set("trades",trades);
 
-let pending={}, positions={}, halted=false, sqOff=false;
+/* positions (open risk) must survive a page reload — including the
+   OneDrive OAuth connect flow, which navigates away and back. Signals in
+   `pending` are deliberately NOT persisted: their reference price/TTL are
+   tied to the poll session that created them, so a restored stale one
+   would be actively misleading rather than safe to keep. */
+let pending={}, positions=store.get("positions",{}), halted=false, sqOff=false;
+function savePositions(){ store.set("positions",positions); }
 /* render() fully rebuilds these lists every poll tick, so without tracking
    which ids were already on screen, the "arrive" entrance animation would
    replay for unchanged cards every ~20s — exactly the kind of restless
@@ -993,7 +1014,7 @@ function journalClose(p,undPrice,reason,exitFill){
     rupeesExact=true;
   }
   trades.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,8),
-    closed:Date.now(),symbol:p.symbol,side:p.sig.side,
+    opened:p.opened,closed:Date.now(),symbol:p.symbol,side:p.sig.side,
     strategy:p.sig.strategy,underlying:p.sig.underlying,
     vehicle:p.sig.vehicle,reason,r:+r.toFixed(3),rupees,rupeesExact,
     cost:+cfg.cost||0,mode});
@@ -1484,6 +1505,34 @@ function candlesFor(inst,n){
   const cur=inst.builder.current;
   return cur?h.concat([cur]):h;
 }
+/* Entry/exit markers on the price chart, grounded in real trade/position
+   data rather than a separate signal-history log: a triangle where a trade
+   actually entered (direction = side), a dot where it actually exited
+   (color = win/loss). closed trades made before this field existed won't
+   have `opened` and just show their exit dot. */
+function chartMarkers(inst){
+  const marks=[];
+  for(const t of trades){
+    if(t.underlying!==inst.w.name)continue;
+    if(t.opened)marks.push({ts:t.opened,kind:t.side==="BUY"?"buy":"sell"});
+    marks.push({ts:t.closed,kind:t.r>=0?"win":"loss"});
+  }
+  for(const id in positions){
+    const p=positions[id];
+    if(p.sig.underlying!==inst.w.name)continue;
+    marks.push({ts:p.opened,kind:p.sig.side==="BUY"?"buy":"sell"});
+  }
+  return marks;
+}
+function nearestCandle(cs,ts){
+  let idx=-1,best=Infinity;
+  cs.forEach((c,i)=>{const d=Math.abs(c.ts-ts);if(d<best){best=d;idx=i;}});
+  return idx;
+}
+function triUp(ctx,x,y,s){ctx.beginPath();ctx.moveTo(x,y-s);
+  ctx.lineTo(x-s,y+s);ctx.lineTo(x+s,y+s);ctx.closePath();ctx.fill();}
+function triDown(ctx,x,y,s){ctx.beginPath();ctx.moveTo(x,y+s);
+  ctx.lineTo(x-s,y-s);ctx.lineTo(x+s,y-s);ctx.closePath();ctx.fill();}
 function drawChart(cv,inst,big){
   const dpr=devicePixelRatio||1;
   const ctx=cv.getContext("2d");
@@ -1528,6 +1577,28 @@ function drawChart(cv,inst,big){
       i?ctx.lineTo(x,Y(v)):ctx.moveTo(x,Y(v));});
     ctx.stroke();
   });
+  /* entry (triangle, direction = side) / exit (dot, color = win/loss)
+     markers — see chartMarkers() */
+  const tsMin=cs[0].ts, tsMax=cs[cs.length-1].ts;
+  const markHits=[];
+  chartMarkers(inst).forEach(m=>{
+    if(m.ts<tsMin||m.ts>tsMax)return;
+    const idx=nearestCandle(cs,m.ts); if(idx<0)return;
+    const c=cs[idx], x=padX+step*idx+step/2;
+    const sz=Math.min(6*dpr,step*0.35);
+    if(m.kind==="buy"){
+      ctx.fillStyle=P.up;ctx.strokeStyle=P.panel;ctx.lineWidth=1.5*dpr;
+      triUp(ctx,x,Y(c.low)+sz+3*dpr,sz);ctx.stroke();
+    }else if(m.kind==="sell"){
+      ctx.fillStyle=P.down;ctx.strokeStyle=P.panel;ctx.lineWidth=1.5*dpr;
+      triDown(ctx,x,Y(c.high)-sz-3*dpr,sz);ctx.stroke();
+    }else{
+      ctx.fillStyle=m.kind==="win"?P.up:P.down;
+      ctx.beginPath();ctx.arc(x,Y(c.close),3.5*dpr,0,7);ctx.fill();
+      ctx.strokeStyle=P.panel;ctx.lineWidth=1.5*dpr;ctx.stroke();
+    }
+    markHits.push(Object.assign({idx},m));
+  });
   /* time axis: first/last visible candle */
   ctx.fillStyle=P.mute;
   ctx.fillText(new Date(cs[0].ts).toTimeString().slice(0,5), padX, H-4*dpr);
@@ -1538,7 +1609,7 @@ function drawChart(cv,inst,big){
     8*dpr,13*dpr);
   ctx.fillStyle=P.mute;
   ctx.fillText("5m · EMA9/21",W-padR-92*dpr,13*dpr);
-  cv._meta={cs,padX,step,dpr};
+  cv._meta={cs,padX,step,dpr,markHits};
 }
 function drawMACD(cv,cs){
   const dpr=devicePixelRatio||1, ctx=cv.getContext("2d");
@@ -1611,6 +1682,12 @@ function chartHover(e,cv,tip){
     const {k,d}=stochastic(meta.cs);
     extra+=`<div>Stoch %K ${k[idx].toFixed(0)} %D ${d[idx].toFixed(0)}</div>`;
   }
+  const MARK_LABEL={buy:"▲ Buy entry",sell:"▼ Sell entry",
+    win:"● Win exit",loss:"● Loss exit"};
+  (meta.markHits||[]).filter(m=>m.idx===idx).forEach(m=>{
+    extra+=`<div class="${m.kind==="buy"||m.kind==="win"?"pos":"neg"}">`
+      +`${MARK_LABEL[m.kind]}</div>`;
+  });
   const up=c.close>=c.open;
   tip.innerHTML=`<div><b>${new Date(c.ts).toTimeString().slice(0,5)}</b></div>
     <div>O ${c.open.toFixed(1)} H ${c.high.toFixed(1)} L ${c.low.toFixed(1)} `
@@ -1835,6 +1912,7 @@ function render(){
        <td class="r ${t.r<0?"neg":"pos"}">${fmtR(t.r)}</td>
        <td class="r">${rupeeCell(t)}</td></tr>`).join("")+"</table>";
   if(!$("view_dash").classList.contains("hide")) renderDashboard();
+  savePositions();
 }
 window.skipSignal=id=>{delete pending[id];render();};
 window.execSignal=execSignal;
