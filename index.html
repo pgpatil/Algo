@@ -304,6 +304,7 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
   <nav>
     <a href="#desk" id="nav_desk" class="on">Desk</a>
     <a href="#dash" id="nav_dash">Dashboard</a>
+    <a href="#recs" id="nav_recs">Recommendations</a>
     <span class="sync" id="sync">OneDrive: off</span>
   </nav>
 </div></header>
@@ -381,6 +382,26 @@ canvas.spark{width:100%;height:46px;background:none;border:none;
     <p class="note">An instrument earns LIVE only after its expectancy is
       positive over a meaningful sample (30+ trades), and stays there only
       while it holds.</p>
+  </section>
+</div>
+
+<!-- ============================ RECOMMENDATIONS VIEW =================== -->
+<div class="hide" id="view_recs">
+  <section>
+    <h2>Accuracy by strategy</h2>
+    <div class="panel" id="recAccuracy"><div class="empty">No recommendations
+      logged yet — this fills in as strategies fire signals, whether or not
+      you act on them.</div></div>
+    <p class="note">Accuracy = target-hit rate among resolved recommendations
+      (target or stop only, EOD square-offs excluded as inconclusive) —
+      computed from every signal a strategy fired, not just the ones you
+      executed, so it isn't biased by which calls you chose to take.</p>
+  </section>
+  <section>
+    <h2>Recommendation log</h2>
+    <div class="panel scroll" id="recLog"><div class="empty">Every signal a
+      strategy generates lands here — executed, skipped, or expired — so
+      you can judge the call itself, not just the trades you took.</div></div>
   </section>
 </div>
 
@@ -718,6 +739,22 @@ function mergeTrades(local, remote){
   for(const t of (local||[]))  map.set(tradeKey(t), t); // local wins on tie
   return [...map.values()].sort((a,b)=>a.closed-b.closed);
 }
+/* recs always carry a real id (assigned at signal creation), so no
+   fallback fingerprint is needed. On a tie, prefer whichever copy is
+   resolved (has an outcome) over an unresolved one, regardless of which
+   side is "local" — a device that was open when a signal resolved
+   shouldn't lose that outcome to a stale unresolved copy from a device
+   that synced later. */
+function mergeRecs(local, remote){
+  const map=new Map();
+  for(const r of (remote||[])) if(r&&r.id) map.set(r.id, r);
+  for(const r of (local||[])){
+    if(!r||!r.id)continue;
+    const other=map.get(r.id);
+    map.set(r.id, (other&&other.outcome&&!r.outcome)?other:r);
+  }
+  return [...map.values()].sort((a,b)=>a.created-b.created);
+}
 /*ENDCORE*/
 
 /* ============================ STATE & STORAGE =========================== */
@@ -742,6 +779,14 @@ let migrated=false;
 trades.forEach(t=>{if(!t.id){t.id=t.closed+"-"+Math.random().toString(36).slice(2,8);
   migrated=true;}});
 if(migrated)store.set("trades",trades);
+
+/* Every signal a strategy fires gets logged here the moment it's generated
+   — whether or not it's actually executed — so accuracy can be judged on
+   the strategy's calls, not just on the subset of trades the user chose to
+   take (which would be a selection-biased sample). Shadow-tracked against
+   real price data the same way an open position's stop/target would be. */
+let recs=store.get("recs",[]);
+function saveRecs(){ store.set("recs",recs); }
 
 /* positions (open risk) must survive a page reload — including the
    OneDrive OAuth connect flow, which navigates away and back. Signals in
@@ -862,8 +907,32 @@ function onSample(inst,price){
   const t=new Date();
   const closed=inst.builder.onSample(price,t.getTime());
   checkExits(inst,price,t);
+  checkRecommendations(inst,t);
   if(closed) evaluate(inst,t);
   expireStale();
+}
+/* Shadow-tracks every unresolved, unexecuted recommendation against the
+   same running bar high/low checkExits() uses, so a signal that was
+   skipped or expired still gets a real target/stop/EOD outcome. Executed
+   recommendations are excluded here — journalClose() sets their outcome
+   from what actually happened, which can differ (manual close, LIVE-ASSIST
+   fill, etc.) from a pure stop/target shadow simulation. */
+function checkRecommendations(inst,t){
+  const bar=inst.builder.current; if(!bar)return;
+  const past=t.getHours()>15||(t.getHours()===15&&t.getMinutes()>=12);
+  let changed=false;
+  for(const r of recs){
+    if(r.outcome||r.executed||r.underlying!==inst.w.name)continue;
+    const hitStop=r.side==="BUY"?bar.low<=r.stop:bar.high>=r.stop;
+    const hitTgt =r.side==="BUY"?bar.high>=r.target:bar.low<=r.target;
+    if(hitStop){r.outcome="stop";r.outcomeTs=Date.now();
+      r.outcomeR=+rMultiple(r,r.stop).toFixed(3);changed=true;}
+    else if(hitTgt){r.outcome="target";r.outcomeTs=Date.now();
+      r.outcomeR=+rMultiple(r,r.target).toFixed(3);changed=true;}
+    else if(past){r.outcome="eod";r.outcomeTs=Date.now();
+      r.outcomeR=+rMultiple(r,inst.spot||r.entry).toFixed(3);changed=true;}
+  }
+  if(changed)saveRecs();
 }
 function dayR(){
   const today=new Date().toDateString();
@@ -882,18 +951,31 @@ function canEnter(inst,t){
   }
   return true;
 }
+function logRecommendation(s){
+  recs.push({id:s.id,created:s.created,strategy:s.strategy,
+    underlying:s.underlying,vehicle:s.vehicle,side:s.side,
+    entry:s.entry,stop:s.stop,target:s.target,
+    executed:false,tradeId:null,outcome:null,outcomeTs:null,outcomeR:null});
+  saveRecs();
+}
+/* Signal detection always runs and is always logged to `recs` — that's
+   the strategy's raw call. Whether it becomes an actionable pending signal
+   (pending[], beep, notify) is gated separately by canEnter(), so a signal
+   fired while halted or at max positions still counts toward accuracy. */
 function evaluate(inst,t){
-  if(!canEnter(inst,t))return;
   const c=inst.builder.history, sigs=[];
   if(cfg.orb){const s=orbSignal(c,t.toDateString(),inst.orb); if(s)sigs.push(s);}
   if(cfg.ema){const s=emaSignal(c); if(s)sigs.push(s);}
   if(cfg.morning){const s=morningTrendSignal(c,t.toDateString(),t); if(s)sigs.push(s);}
+  const actionable=canEnter(inst,t);
   for(const s of sigs){
     s.id=Math.random().toString(36).slice(2,10);
     s.created=Date.now();
     s.underlying=inst.w.name;
     s.vehicle=inst.w.vehicle;
     s._w=inst.w;
+    logRecommendation(s);
+    if(!actionable)continue;
     pending[s.id]=s;
     beep();
     notify((s.side==="BUY"?"BUY ":"SELL ")+s.underlying+" ["+s.strategy+"]",
@@ -929,6 +1011,8 @@ function execSignal(id){
   const symField=document.querySelector('[data-sym="'+id+'"]');
   if(symField&&symField.value.trim()) v.symbol=symField.value.trim().toUpperCase();
   delete pending[id];
+  const rec=recs.find(r=>r.id===id);
+  if(rec){rec.executed=true;saveRecs();}
   if(cfg.mode==="PAPER"){
     openPosition(s,v,null);
     toast("PAPER filled: "+v.orderSide+" "+v.qty+" × "+v.symbol
@@ -1013,12 +1097,24 @@ function journalClose(p,undPrice,reason,exitFill){
       ((p.sig.vehicle==="OPTION"||p.orderSide==="BUY")?1:-1);
     rupeesExact=true;
   }
-  trades.push({id:Date.now()+"-"+Math.random().toString(36).slice(2,8),
+  const tradeId=Date.now()+"-"+Math.random().toString(36).slice(2,8);
+  trades.push({id:tradeId,recId:p.sig.id,
     opened:p.opened,closed:Date.now(),symbol:p.symbol,side:p.sig.side,
     strategy:p.sig.strategy,underlying:p.sig.underlying,
     vehicle:p.sig.vehicle,reason,r:+r.toFixed(3),rupees,rupeesExact,
     cost:+cfg.cost||0,mode});
   store.set("trades",trades);
+  /* an executed recommendation's outcome mirrors what actually happened to
+     the real trade (manual close, LIVE-ASSIST fill, EOD, etc.) rather than
+     a separate shadow simulation, which could otherwise disagree with it */
+  const rec=recs.find(x=>x.id===p.sig.id);
+  if(rec){
+    rec.tradeId=tradeId;
+    rec.outcome=/target/i.test(reason)?"target":/stop/i.test(reason)?"stop":"closed";
+    rec.outcomeR=+r.toFixed(3);
+    rec.outcomeTs=Date.now();
+    saveRecs();
+  }
   OD.pushSoon();
   toast((r>=0?"🟢":"🔴")+" Closed "+p.symbol+" — "+reason+" · "
         +(r>=0?"+":"")+r.toFixed(2)+"R");
@@ -1086,7 +1182,16 @@ const OD={
       headers:{"Content-Type":"application/x-www-form-urlencoded"},
       body:new URLSearchParams(Object.assign(
         {client_id:cfg.msid,scope:this.scope},params))});
-    if(!r.ok) throw new Error("token "+r.status);
+    if(!r.ok){
+      let body=null; try{body=await r.json();}catch(e){/* not json */}
+      const err=new Error("token "+r.status+(body&&body.error?" "+body.error:""));
+      /* 400/401 here means the refresh token itself is dead (expired,
+         revoked, or the account's session policy killed it) — no amount
+         of retrying will fix that, only a fresh interactive sign-in will.
+         5xx/network errors are transient and worth retrying as-is. */
+      err.authFailed=r.status===400||r.status===401;
+      throw err;
+    }
     const j=await r.json();
     this.tok={access:j.access_token,
       exp:Date.now()+(j.expires_in-120)*1000,
@@ -1109,8 +1214,18 @@ const OD={
   async access(){
     if(!this.tok)throw new Error("not connected");
     if(Date.now()<this.tok.exp)return this.tok.access;
-    await this.tokenRequest({grant_type:"refresh_token",
-      refresh_token:this.tok.refresh});
+    try{
+      await this.tokenRequest({grant_type:"refresh_token",
+        refresh_token:this.tok.refresh});
+    }catch(e){
+      if(e.authFailed){
+        /* dead refresh token — clear it so the app stops calling itself
+           "connected" and pointlessly retrying; the user needs to sign in
+           again, so surface that directly instead of a generic error. */
+        this.tok=null; store.del("od_tok");
+      }
+      throw e;
+    }
     return this.tok.access;
   },
   async graph(path,opts={}){
@@ -1128,7 +1243,7 @@ const OD={
   },
   async push(){
     const body=JSON.stringify({v:1,updated:Date.now(),
-      trades,cfg:cfgForSync()});
+      trades,recs,cfg:cfgForSync()});
     const r=await this.graph("/me/drive/special/approot:/"+this.FILE+":/content",
       {method:"PUT",headers:{"Content-Type":"application/json"},body});
     if(!r.ok)throw new Error("push "+r.status);
@@ -1142,6 +1257,7 @@ const OD={
         const before=trades.length;
         trades=mergeTrades(trades,remote.trades);
         if(trades.length!==before){store.set("trades",trades);}
+        if(remote.recs){recs=mergeRecs(recs,remote.recs);saveRecs();}
         if(remote.cfg&&(remote.updated||0)>(cfg.cfgUpdated||0)){
           applySyncedCfg(remote.cfg,remote.updated);
         }
@@ -1151,7 +1267,7 @@ const OD={
       this.setState("ok");
       populateFilters();render();
     }catch(e){
-      this.setState("err");
+      this.setState(this.tok?"err":"reauth");
       console.warn("sync",e);
     }
   },
@@ -1188,11 +1304,15 @@ function renderSync(){
   const map={off:"OneDrive: off",sync:"OneDrive: syncing…",
     ok:"OneDrive: synced "+(OD.lastSync?
       new Date(OD.lastSync).toTimeString().slice(0,5):""),
-    err:"OneDrive: error — Sync now to retry"};
+    err:"OneDrive: error — Sync now to retry",
+    reauth:"OneDrive: sign-in expired — reconnect below"};
   el.textContent=map[OD.state]||"OneDrive: off";
-  el.className="sync "+(OD.state==="ok"?"ok":OD.state==="err"?"err":"");
+  el.className="sync "+(OD.state==="ok"?"ok":
+    (OD.state==="err"||OD.state==="reauth")?"err":"");
   const st=$("s_syncstate");
-  if(st)st.textContent=OD.tok?("connected · "+map[OD.state]):"not connected";
+  if(st)st.textContent=OD.state==="reauth"
+    ?"sign-in expired — click Connect OneDrive to resume syncing"
+    :OD.tok?("connected · "+map[OD.state]):"not connected";
 }
 
 /* ============================ RENDERING ================================= */
@@ -1437,6 +1557,71 @@ function drawRolling(rs){
   ctx.fillStyle=P.mute;
   ctx.fillText("latest: "+fmtR(roll[roll.length-1])+" per trade",
     pad,16*dpr);
+}
+function recStrategyStats(code){
+  const rs=recs.filter(r=>r.strategy===code);
+  const targetN=rs.filter(r=>r.outcome==="target").length;
+  const stopN=rs.filter(r=>r.outcome==="stop").length;
+  const eodN=rs.filter(r=>r.outcome==="eod"||r.outcome==="closed").length;
+  const pendingN=rs.filter(r=>r.outcome==null).length;
+  const resolvedN=targetN+stopN;
+  const accuracy=resolvedN?100*targetN/resolvedN:null;
+  const resolvedRs=rs.filter(r=>r.outcome==="target"||r.outcome==="stop")
+    .map(r=>r.outcomeR);
+  const avgR=resolvedRs.length
+    ?resolvedRs.reduce((a,b)=>a+b,0)/resolvedRs.length:null;
+  return {total:rs.length,executed:rs.filter(r=>r.executed).length,
+    targetN,stopN,eodN,pendingN,accuracy,avgR};
+}
+function renderRecsView(){
+  const codes=[...new Set(recs.map(r=>r.strategy))].sort();
+  const acc=$("recAccuracy");
+  if(acc){
+    acc.innerHTML=!codes.length?
+      '<div class="empty">No recommendations logged yet — this fills in '+
+      'as strategies fire signals, whether or not you act on them.</div>':
+      "<table><tr><th>Strategy</th><th class='r'>Total</th>"+
+      "<th class='r'>Executed</th><th class='r'>Target</th>"+
+      "<th class='r'>Stop</th><th class='r'>EOD/other</th>"+
+      "<th class='r'>Pending</th><th class='r'>Accuracy</th>"+
+      "<th class='r'>Avg R (resolved)</th></tr>"+
+      codes.map(code=>{
+        const s=recStrategyStats(code);
+        return `<tr><td>${esc(code)}</td><td class="r">${s.total}</td>
+          <td class="r">${s.executed}</td><td class="r pos">${s.targetN}</td>
+          <td class="r neg">${s.stopN}</td><td class="r">${s.eodN}</td>
+          <td class="r">${s.pendingN}</td>
+          <td class="r">${s.accuracy==null?"—":s.accuracy.toFixed(0)+"%"}</td>
+          <td class="r ${s.avgR!=null&&s.avgR<0?"neg":"pos"}">
+            ${s.avgR==null?"—":fmtR(s.avgR)}</td></tr>`;
+      }).join("")+"</table>";
+  }
+  const log=$("recLog");
+  if(log){
+    const rows=recs.slice().sort((a,b)=>b.created-a.created).slice(0,300);
+    const outTxt=r=>r.outcome==null?"pending":r.outcome==="target"?"🎯 target":
+      r.outcome==="stop"?"🛑 stop":r.outcome==="eod"?"⏱ EOD":"✔ closed";
+    log.innerHTML=!rows.length?
+      '<div class="empty">Every signal a strategy generates lands here — '+
+      'executed, skipped, or expired — so you can judge the call itself, '+
+      'not just the trades you took.</div>':
+      "<table><tr><th>When</th><th>Strategy</th><th>Instrument</th>"+
+      "<th>Side</th><th class='r'>Entry</th><th class='r'>Stop</th>"+
+      "<th class='r'>Target</th><th>Executed</th><th>Outcome</th>"+
+      "<th class='r'>R</th></tr>"+
+      rows.map(r=>{
+        const d=new Date(r.created);
+        return `<tr><td>${d.toLocaleDateString("en-IN",{day:"2-digit",
+          month:"short"})} ${d.toTimeString().slice(0,5)}</td>
+          <td>${esc(r.strategy)}</td><td>${esc(r.underlying)}</td>
+          <td>${r.side}</td><td class="r">${r.entry.toFixed(1)}</td>
+          <td class="r">${r.stop.toFixed(1)}</td>
+          <td class="r">${r.target.toFixed(1)}</td>
+          <td>${r.executed?"yes":"—"}</td><td>${outTxt(r)}</td>
+          <td class="r ${r.outcomeR!=null&&r.outcomeR<0?"neg":"pos"}">
+            ${r.outcomeR==null?"—":fmtR(r.outcomeR)}</td></tr>`;
+      }).join("")+"</table>";
+  }
 }
 function renderDashboard(){
   const ft=filteredTrades();
@@ -1912,6 +2097,7 @@ function render(){
        <td class="r ${t.r<0?"neg":"pos"}">${fmtR(t.r)}</td>
        <td class="r">${rupeeCell(t)}</td></tr>`).join("")+"</table>";
   if(!$("view_dash").classList.contains("hide")) renderDashboard();
+  if(!$("view_recs").classList.contains("hide")) renderRecsView();
   savePositions();
 }
 window.skipSignal=id=>{delete pending[id];render();};
@@ -1977,11 +2163,15 @@ setInterval(()=>{
 /* ============================ VIEW ROUTING ============================== */
 function route(){
   const dash=location.hash==="#dash";
-  $("view_desk").classList.toggle("hide",dash);
+  const recsView=location.hash==="#recs";
+  $("view_desk").classList.toggle("hide",dash||recsView);
   $("view_dash").classList.toggle("hide",!dash);
-  $("nav_desk").classList.toggle("on",!dash);
+  $("view_recs").classList.toggle("hide",!recsView);
+  $("nav_desk").classList.toggle("on",!dash&&!recsView);
   $("nav_dash").classList.toggle("on",dash);
+  $("nav_recs").classList.toggle("on",recsView);
   if(dash)renderDashboard();
+  if(recsView)renderRecsView();
 }
 window.addEventListener("hashchange",route);
 
@@ -2080,9 +2270,12 @@ $("s_file").onchange=async e=>{
   }catch(err){toast("Import failed: not a valid journal file.","error");}
 };
 $("s_wipe").onclick=()=>{
-  if(confirm("Wipe the entire journal (local + next sync overwrites "
-             +"OneDrive)? Export first if you want a backup.")){
-    trades=[];store.set("trades",trades);render();OD.pushSoon();}
+  if(confirm("Wipe the entire journal, including the recommendation log "
+             +"(local + next sync overwrites OneDrive)? Export first if "
+             +"you want a backup.")){
+    trades=[];store.set("trades",trades);
+    recs=[];saveRecs();
+    render();OD.pushSoon();}
 };
 /* theme: light default, dark opt-in; stays a local per-device choice (like
    mode) and is excluded from OneDrive sync above */
